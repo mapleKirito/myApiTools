@@ -83,7 +83,22 @@ export const SETTINGS_DEFAULTS = {
 /* ----------------------------- 初始化 ----------------------------- */
 export async function initState() {
   const ws = await bridge.store.load();
-  return reloadWorkspace(ws);
+  // 用户是否曾经显式保存过更新渠道。只有「从未保存过」时，才按构建版本套用默认渠道，
+  // 这样既让 -dev 包开箱即走 dev 频道，又不会覆盖用户后来手动改过的选择。
+  const hadChannel = !!(ws && ws.settings && ws.settings.update && ws.settings.update.channel);
+  reloadWorkspace(ws);
+  if (!hadChannel) {
+    try {
+      const info = await bridge.info();
+      if (info && /-dev/i.test(String(info.version || ''))) {
+        state.workspace.settings.update.channel = 'dev';
+        scheduleSave();
+      }
+    } catch {
+      /* 取不到运行版本就保持 stable 默认，不影响启动 */
+    }
+  }
+  return state.workspace;
 }
 
 /**
