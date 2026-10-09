@@ -1,0 +1,74 @@
+# =====================================================================
+# MyApiTools 配置同步服务 —— 部署示例（只拉取镜像，不构建）
+#
+#   1. 按需改下面的环境变量（尤其是端口与数据目录）
+#   2. docker compose up -d
+#   3. 查看日志里的管理端令牌：docker compose logs
+#
+# 想固定某个版本，用环境变量指定 tag（默认 latest）：
+#   MYAPITOOLS_TAG=1.2.0 docker compose up -d
+# 或者在同级目录建一个 .env 文件写 MYAPITOOLS_TAG=1.2.0
+#
+# 详细说明见同目录 README.md
+# =====================================================================
+
+services:
+  myapitools-sync:
+    image: myzhouye/myapitools-server:${MYAPITOOLS_TAG:-latest}
+    # 仓库名必须全小写（Docker 的硬性要求），所以这里是 myapitools 不是 myApiTools。
+    # 想用你自己的镜像仓库，把上面整行换成你自己的地址即可（不要加 build:）
+    container_name: myapitools-sync
+    restart: unless-stopped
+
+    # ---------------------------------------------------------------
+    # 端口绑定：默认只绑宿主回环，也就是只有这台机器自己能访问。
+    # 管理端（/admin）拿到令牌就等于拿到全部账号，绝不该出现在公网上。
+    #
+    #   本机使用      → 保持现状
+    #   局域网多设备同步 → 改成 "0.0.0.0:8787:8787"，但要先想清楚这台机器
+    #                     是否只在内网；公网暴露时必须自己在前面加网关 +
+    #                      HTTPS，并把 ADMIN_DISABLED 设为 1
+    #   远程运维      → 保持回环绑定，走 SSH 隧道：
+    #                     ssh -L 8787:127.0.0.1:8787 user@your-host
+    # ---------------------------------------------------------------
+    ports:
+      - "127.0.0.1:8787:8787"
+
+    environment:
+      PORT: "8787"
+      HOST: "0.0.0.0"
+      DB_FILE: "/app/data/sync.db"
+      # 登录令牌有效期（天）
+      TOKEN_TTL_DAYS: "30"
+
+      # ---------- 管理端 ----------
+      # 令牌随数据卷持久化，首次启动自动生成并打印在日志里。
+      # 也可以把这一行删掉、改用 ADMIN_TOKEN 直接指定一个自己的长随机串。
+      ADMIN_TOKEN_FILE: "/app/data/admin-token.txt"
+      # 容器内看到的来源 IP 是 docker 网桥地址（默认 172.17.0.1），不可能是回环，
+      # 所以下面两行必须成对出现，少一行管理端就恒返回 404：
+      ADMIN_LOCAL_ONLY: "0"   # 解除「仅回环」限制
+      ADMIN_ALLOW: "*"        # 放行来源；只关 LOCAL_ONLY 而白名单为空 = 拒绝一切
+      # 不需要管理端（也不发布客户端新版本）时改成 "1"：
+      # /admin 与 /api/admin/* 会直接返回 404，连"存在"都不暴露
+      ADMIN_DISABLED: "0"
+      # 想收窄来源就把 * 换成具体网段，例如 "172.17.0.1" 或 "172.*"
+      # ADMIN_ALLOW: "172.*"
+
+      # ---------- 客户端发布 ----------
+      # 安装包仓库：跟着数据卷持久化，升级镜像不会丢已发布的版本
+      RELEASES_DIR: "/app/data/releases"
+      # 单个安装包上限（MB）。Electron 安装包通常 70~120MB
+      RELEASE_MAX_MB: "500"
+      # 默认发布渠道
+      RELEASE_CHANNEL: "stable"
+
+      TZ: "Asia/Shanghai"
+
+    volumes:
+      # 数据、管理端令牌、已发布的客户端安装包全在这一个目录里，
+      # 备份它就是备份全部。想换位置直接改左边（宿主路径）。
+      - ./data:/app/data
+
+    # 镜像自带 HEALTHCHECK，想看健康状态：
+    #   docker inspect --format '{{.State.Health.Status}}' myapitools-sync

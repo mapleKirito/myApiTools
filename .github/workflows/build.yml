@@ -1,0 +1,112 @@
+name: Build Desktop App
+
+# 推 v* 标签：三平台构建并发布到 GitHub Release
+# 手动触发（workflow_dispatch）：只构建并产出 Actions artifacts，不发 Release
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+# 创建 Release 需要对 contents 写权限
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # 某个平台失败不影响其它平台继续构建
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: win
+            artifacts: |
+              dist/*.exe
+              dist/*.blockmap
+              dist/*.yml
+          - os: macos-latest
+            platform: mac
+            artifacts: |
+              dist/*.dmg
+              dist/*.zip
+              dist/*.blockmap
+              dist/*.yml
+          - os: ubuntu-latest
+            platform: linux
+            artifacts: |
+              dist/*.AppImage
+              dist/*.deb
+              dist/*.blockmap
+              dist/*.yml
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          # electron-builder 26 依赖 Node 22（ESM-only 依赖），服务端也要求 >=22.5
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Linux packaging tools
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libopenjp2-tools
+
+      - name: Build
+        env:
+          # 没有签名证书，关掉 macOS 身份自动探测，避免签名步骤报错
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        # 每个 runner 只构建自己的平台；显式 --publish never，
+        # Release 由下面的 release job 统一创建，避免 electron-builder 隐式发布
+        run: npx electron-builder --${{ matrix.platform }} --publish never
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: myapitools-${{ matrix.platform }}
+          path: ${{ matrix.artifacts }}
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    # 只有打标签才发 Release；手动触发只构建
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          # 下载后按 artifact 名分目录：artifacts/myapitools-win/... 等
+          path: artifacts
+
+      - name: List downloaded files
+        run: find artifacts -type f
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          # artifacts/**/* 会把三平台的安装包、blockmap、latest.yml 全部传上去
+          files: artifacts/**/*
+          # 自动根据合并的 PR 和提交生成更新日志
+          generate_release_notes: true
+          # 版本号带 '-'（如 0.0.1-dev）时自动标记为预发布
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          fail_on_unmatched_files: true

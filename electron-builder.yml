@@ -1,0 +1,67 @@
+# Electron 打包配置
+# 用法：npm i -D electron-builder  然后  npm run dist
+
+appId: com.myapitools.app
+productName: MyApiTools
+copyright: MIT Licensed
+
+directories:
+  output: dist
+  buildResources: build
+
+# 只打包运行必需的文件，源码与测试不进安装包
+files:
+  - electron/**/*
+  - renderer/**/*
+  - package.json
+  - '!**/*.map'
+  - '!tools/**'
+  - '!server/**'
+  - '!dist/**'
+
+# 同步服务端与文档随包附带，便于部署到自己的服务器
+extraResources:
+  - from: server
+    to: server
+    filter:
+      - '**/*'
+      - '!data/**'
+  - from: README.md
+    to: README.md
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+# 两个 Windows target 都产出 .exe，如果共用上面那个 artifactName 会互相覆盖，
+# 所以安装器单独加 Setup 前缀（portable 继续用 ${productName}-${version}-${arch}.exe）。
+# 这也让服务端管理页能从文件名里认出「版本 + 架构 + 平台」。
+nsis:
+  artifactName: ${productName}-Setup-${version}-${arch}.${ext}
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: MyApiTools
+
+mac:
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+  category: public.app-category.developer-tools
+  # 显式带上 ${arch}：x64 / arm64 两个 dmg 才不会互相覆盖，
+  # 服务端管理页也能从文件名认出「版本 + 架构 + 平台」。
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Development
+  # 同上：文件名带 ${arch}，供服务端发布页推断架构。
+  artifactName: ${productName}-${version}-${arch}.${ext}

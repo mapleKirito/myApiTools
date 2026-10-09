@@ -1,0 +1,792 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MyApiTools 同步服务 · 管理端</title>
+<style>
+  :root {
+    --bg: #16181d; --bg-2: #1d2026; --bg-3: #23262e;
+    --border: #2c3038; --border-2: #383d47;
+    --text: #e6e8ec; --text-2: #a8aeba; --text-3: #6f7683;
+    --accent: #6d8bff; --ok: #4ade80; --warn: #fbbf24; --danger: #f87171;
+    --radius: 8px;
+  }
+  * { box-sizing: border-box; }
+  /* hidden 属性必须能压过下面的 display: flex —— 浏览器默认给 [hidden] 的那条
+     display:none 优先级比类选择器低，漏了这条 #gate / #app 的显隐切换会整个失效
+     （表现是登录后闸门不消失，看起来"输了令牌没反应"，且控制台零报错）。 */
+  [hidden] { display: none !important; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 13px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .mono { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; }
+  a { color: var(--accent); }
+  button {
+    font: inherit; cursor: pointer; border-radius: 6px;
+    border: 1px solid var(--border-2); background: var(--bg-3); color: var(--text);
+    padding: 6px 12px; transition: .12s;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #0d0f13; font-weight: 600; }
+  button.primary:hover:not(:disabled) { filter: brightness(1.1); color: #0d0f13; }
+  button.danger { color: var(--danger); border-color: rgba(248,113,113,.4); }
+  button.danger:hover:not(:disabled) { background: rgba(248,113,113,.12); color: var(--danger); }
+  button.mini { padding: 3px 8px; font-size: 11.5px; border-radius: 5px; }
+  input, select {
+    font: inherit; background: var(--bg); color: var(--text);
+    border: 1px solid var(--border-2); border-radius: 6px; padding: 7px 10px; outline: none;
+  }
+  input:focus, select:focus { border-color: var(--accent); }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 22px 20px 60px; }
+
+  /* ---------- 登录闸门 ---------- */
+  #gate { display: flex; min-height: 100vh; align-items: center; justify-content: center; padding: 24px; }
+  #gate .box {
+    width: 100%; max-width: 420px; background: var(--bg-2);
+    border: 1px solid var(--border); border-radius: 12px; padding: 26px 26px 22px;
+  }
+  #gate h1 { margin: 0 0 4px; font-size: 18px; }
+  #gate p { margin: 0 0 18px; color: var(--text-2); font-size: 12.5px; line-height: 1.75; }
+  #gate input { width: 100%; margin-bottom: 12px; }
+  #gate button { width: 100%; }
+
+  /* ---------- 主体 ---------- */
+  header.top {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding-bottom: 14px; margin-bottom: 18px; border-bottom: 1px solid var(--border);
+  }
+  header.top .brand { display: flex; align-items: center; gap: 9px; font-weight: 600; font-size: 15px; }
+  header.top .mark {
+    width: 24px; height: 24px; border-radius: 6px; background: var(--accent); color: #0d0f13;
+    display: grid; place-items: center; font-weight: 800; font-size: 13px;
+  }
+  header.top .spacer { flex: 1; }
+  .chip {
+    font-size: 11.5px; color: var(--text-2); background: var(--bg-2);
+    border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px;
+  }
+  /* 开发快照版（版本号带 -dev）：内容随时可能被覆盖，别当正式版看 */
+  .chip.snap { color: var(--warn); border-color: rgba(251,191,36,.4); background: rgba(251,191,36,.1); }
+  h2 { font-size: 13px; margin: 26px 0 10px; color: var(--text-2); font-weight: 600; letter-spacing: .4px; }
+  h2:first-of-type { margin-top: 0; }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 10px; }
+  .card {
+    background: var(--bg-2); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 12px 13px;
+  }
+  .card .k { font-size: 11px; color: var(--text-3); margin-bottom: 5px; }
+  .card .v { font-size: 19px; font-weight: 600; }
+  .card .v.sm { font-size: 13px; font-weight: 500; }
+  .card .sub { font-size: 10.5px; color: var(--text-3); margin-top: 3px; }
+
+  .panel { background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  .toolbar {
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    padding: 11px 12px; border-bottom: 1px solid var(--border);
+  }
+  .toolbar .spacer { flex: 1; }
+  .toolbar input[type=search] { width: 210px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { text-align: left; padding: 8px 11px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { color: var(--text-3); font-weight: 500; font-size: 11px; background: var(--bg-3); }
+  tbody tr:hover { background: rgba(109,139,255,.05); }
+  td.wrap-any { white-space: normal; word-break: break-all; max-width: 220px; }
+  .empty { padding: 26px; text-align: center; color: var(--text-3); font-size: 12.5px; }
+  .pager { display: flex; gap: 8px; align-items: center; padding: 10px 12px; color: var(--text-2); font-size: 12px; }
+  .pager .spacer { flex: 1; }
+
+  .tag {
+    display: inline-block; font-size: 10.5px; padding: 1px 7px; border-radius: 999px;
+    border: 1px solid var(--border-2); color: var(--text-2);
+  }
+  .tag.ok { color: var(--ok); border-color: rgba(74,222,128,.35); }
+  .tag.off { color: var(--danger); border-color: rgba(248,113,113,.35); }
+  .tag.admin { color: var(--accent); border-color: rgba(109,139,255,.4); }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .dim { color: var(--text-3); }
+
+  .form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; padding: 12px; align-items: end; }
+  .form-grid label { display: block; font-size: 11px; color: var(--text-3); margin-bottom: 5px; }
+  .form-grid input, .form-grid select { width: 100%; }
+
+  #toasts { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 50; }
+  .toast {
+    min-width: 220px; max-width: 400px; background: var(--bg-3); border: 1px solid var(--border-2);
+    border-left: 3px solid var(--accent); border-radius: 7px; padding: 9px 13px; font-size: 12.5px;
+    box-shadow: 0 8px 26px rgba(0,0,0,.4); animation: in .16s ease-out;
+  }
+  .toast.ok { border-left-color: var(--ok); }
+  .toast.err { border-left-color: var(--danger); }
+  @keyframes in { from { opacity: 0; transform: translateY(6px); } }
+  .warn-box {
+    margin-top: 14px; padding: 11px 13px; border-radius: var(--radius);
+    background: rgba(251,191,36,.08); border: 1px solid rgba(251,191,36,.28);
+    color: var(--text-2); font-size: 11.5px; line-height: 1.75;
+  }
+
+  /* ---------- 安装包上传 ---------- */
+  input[type=file] { padding: 5px 8px; font-size: 12px; }
+  input[type=file]::file-selector-button {
+    font: inherit; font-size: 12px; cursor: pointer; margin-right: 10px;
+    border: 1px solid var(--border-2); background: var(--bg-3); color: var(--text);
+    border-radius: 5px; padding: 4px 10px;
+  }
+  input[type=file]::file-selector-button:hover { border-color: var(--accent); color: #fff; }
+  .progress { height: 6px; border-radius: 999px; background: var(--bg-3); overflow: hidden; }
+  .progress-bar { height: 100%; width: 0; background: var(--accent); transition: width .15s linear; }
+  .progress-bar.done { background: var(--ok); }
+  .progress-bar.fail { background: var(--danger); }
+  .hint { font-size: 11px; color: var(--text-3); }
+</style>
+</head>
+<body>
+
+<div id="gate">
+  <div class="box">
+    <h1>同步服务 · 管理端</h1>
+    <p>请粘贴管理令牌。<br />令牌在服务端数据目录的 <span class="mono">admin-token.txt</span>（权限 0600），或来自环境变量 <span class="mono">ADMIN_TOKEN</span>。</p>
+    <input id="gate-token" type="password" placeholder="管理令牌" autocomplete="off" spellcheck="false" />
+    <button class="primary" id="gate-btn">进入管理端</button>
+    <div class="warn-box">
+      管理令牌只用于本页面，与用户同步账号完全独立。<br />
+      服务端默认只允许本机回环地址访问本页面。
+    </div>
+  </div>
+</div>
+
+<div class="wrap" id="app" hidden>
+  <header class="top">
+    <div class="brand"><span class="mark">M</span><span>配置同步服务 · 管理端</span></div>
+    <span class="chip" id="chip-version">—</span>
+    <span class="chip snap" id="chip-snapshot" hidden title="版本号带 -dev：开发快照版，内容可能随时被覆盖更新">快照版</span>
+    <span class="chip" id="chip-source">—</span>
+    <span class="chip" id="chip-scope">—</span>
+    <span class="spacer"></span>
+    <button id="btn-refresh">刷新</button>
+    <button id="btn-logout">退出</button>
+  </header>
+
+  <h2>服务概览</h2>
+  <div class="cards" id="overview"></div>
+
+  <h2>新建同步账号</h2>
+  <div class="panel">
+    <div class="form-grid">
+      <div><label>邮箱</label><input id="new-email" type="text" placeholder="user@example.com" spellcheck="false" /></div>
+      <div><label>初始密码（至少 6 位）</label><input id="new-password" type="text" placeholder="临时密码" spellcheck="false" /></div>
+      <div><label>备注</label><input id="new-note" type="text" placeholder="可选，如：张三 / 内网联调" /></div>
+      <div><label>角色</label>
+        <select id="new-role"><option value="user">普通用户</option><option value="admin">管理员（仅标记）</option></select>
+      </div>
+      <div><button class="primary" id="btn-create">创建账号</button></div>
+    </div>
+  </div>
+
+  <h2>同步账号</h2>
+  <div class="panel">
+    <div class="toolbar">
+      <input id="q" type="search" placeholder="按邮箱搜索…" spellcheck="false" />
+      <select id="f-status">
+        <option value="">全部状态</option>
+        <option value="active">仅启用</option>
+        <option value="disabled">仅禁用</option>
+      </select>
+      <button id="btn-search">查询</button>
+      <span class="spacer"></span>
+      <span class="dim" id="user-count">—</span>
+    </div>
+    <div style="overflow:auto">
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th><th>邮箱</th><th>状态</th><th>角色</th>
+            <th class="num">配置项</th><th class="num">已删</th><th class="num">有效令牌</th>
+            <th>最后登录</th><th>最后同步</th><th>备注</th><th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="users-body"></tbody>
+      </table>
+    </div>
+    <div class="pager">
+      <span id="page-info">—</span>
+      <span class="spacer"></span>
+      <button class="mini" id="btn-prev">上一页</button>
+      <button class="mini" id="btn-next">下一页</button>
+    </div>
+  </div>
+
+  <h2>客户端发布</h2>
+  <div class="panel">
+    <div class="form-grid">
+      <div style="grid-column:1/-1">
+        <label>安装包文件（选中后会自动从文件名填出版本 / 平台 / 架构，可改）</label>
+        <input id="rel-file" type="file" spellcheck="false" />
+      </div>
+      <div><label>版本号</label><input id="rel-version" type="text" placeholder="1.2.0" spellcheck="false" /></div>
+      <div><label>平台</label>
+        <select id="rel-platform">
+          <option value="win">Windows</option>
+          <option value="mac">macOS</option>
+          <option value="linux">Linux</option>
+        </select>
+      </div>
+      <div><label>架构</label>
+        <select id="rel-arch">
+          <option value="x64">x64</option>
+          <option value="arm64">arm64</option>
+          <option value="ia32">ia32</option>
+          <option value="armv7l">armv7l</option>
+        </select>
+      </div>
+      <div><label>渠道</label><input id="rel-channel" type="text" placeholder="stable" spellcheck="false" /></div>
+      <div><label>更新说明</label><input id="rel-notes" type="text" placeholder="可选，客户端会展示这段文字" /></div>
+      <div><button class="primary" id="btn-release">发布</button></div>
+    </div>
+    <div id="rel-progress-wrap" hidden style="padding:0 12px 12px">
+      <div class="progress"><div class="progress-bar" id="rel-progress-bar"></div></div>
+      <div class="hint" id="rel-progress-text" style="margin-top:6px">—</div>
+    </div>
+    <div class="toolbar" style="border-top:1px solid var(--border)">
+      <span class="hint">同一「渠道 + 版本 + 平台 + 架构」重复发布会覆盖旧文件；客户端按平台/架构取各自的最新版本。</span>
+      <span class="spacer"></span>
+      <span class="dim" id="rel-info">—</span>
+    </div>
+    <div style="overflow:auto">
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th><th>版本</th><th>平台</th><th>架构</th><th>渠道</th>
+            <th class="num">大小</th><th class="num">下载</th><th>发布时间</th>
+            <th>文件名</th><th>更新说明</th><th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="releases-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <h2>管理操作审计</h2>
+  <div class="panel">
+    <div style="overflow:auto">
+      <table>
+        <thead><tr><th>时间</th><th>操作</th><th>目标账号</th><th>详情</th><th>来源 IP</th></tr></thead>
+        <tbody id="audit-body"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div id="toasts"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  var TOKEN_KEY = 'myapitools.admin.token';
+  var token = '';
+  var page = { limit: 50, offset: 0, q: '', status: '', total: 0 };
+  var overview = null;
+  var releases = [];
+
+  var $ = function (id) { return document.getElementById(id); };
+
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function toast(msg, kind) {
+    var el = document.createElement('div');
+    el.className = 'toast ' + (kind || '');
+    el.textContent = msg;
+    $('toasts').appendChild(el);
+    setTimeout(function () {
+      el.style.transition = 'opacity .2s';
+      el.style.opacity = '0';
+      setTimeout(function () { el.remove(); }, 220);
+    }, kind === 'err' ? 6000 : 3200);
+  }
+
+  function fmtTime(ts) {
+    if (!ts) return '—';
+    var d = new Date(Number(ts));
+    if (isNaN(d.getTime())) return '—';
+    var p = function (n) { return String(n).padStart(2, '0'); };
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+  }
+
+  function fmtAgo(ts) {
+    if (!ts) return '—';
+    var diff = Date.now() - Number(ts);
+    if (diff < 0) diff = 0;
+    var min = Math.floor(diff / 60000);
+    if (min < 1) return '刚刚';
+    if (min < 60) return min + ' 分钟前';
+    var hr = Math.floor(min / 60);
+    if (hr < 24) return hr + ' 小时前';
+    return Math.floor(hr / 24) + ' 天前';
+  }
+
+  function fmtSize(bytes) {
+    if (!bytes) return '0 B';
+    var u = ['B', 'KB', 'MB', 'GB'];
+    var i = 0;
+    var n = Number(bytes);
+    while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+    return (i === 0 ? n : n.toFixed(1)) + ' ' + u[i];
+  }
+
+  function fmtUptime(sec) {
+    if (sec < 60) return sec + ' 秒';
+    if (sec < 3600) return Math.floor(sec / 60) + ' 分钟';
+    if (sec < 86400) return Math.floor(sec / 3600) + ' 小时 ' + Math.floor((sec % 3600) / 60) + ' 分';
+    return Math.floor(sec / 86400) + ' 天 ' + Math.floor((sec % 86400) / 3600) + ' 小时';
+  }
+
+  /** 统一请求：自动带管理令牌；401 时退回登录闸门 */
+  function api(path, opts) {
+    opts = opts || {};
+    var headers = { accept: 'application/json' };
+    if (token) headers['x-admin-token'] = token;
+    if (opts.body !== undefined) headers['content-type'] = 'application/json';
+    return fetch(path, {
+      method: opts.method || 'GET',
+      headers: headers,
+      body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+    }).then(function (res) {
+      return res.text().then(function (text) {
+        var data = null;
+        try { data = text ? JSON.parse(text) : null; } catch (e) { data = { message: text.slice(0, 200) }; }
+        if (res.status === 401) {
+          signOut('管理令牌已失效，请重新输入');
+          throw new Error((data && data.message) || '管理令牌不正确');
+        }
+        if (res.status === 404) {
+          throw new Error('管理端未启用或当前来源不被允许（服务端返回 404）');
+        }
+        if (!res.ok) throw new Error((data && data.message) || ('HTTP ' + res.status));
+        return data;
+      });
+    });
+  }
+
+  /* ---------------------------- 登录闸门 ---------------------------- */
+  $('gate-btn').onclick = function () { tryToken($('gate-token').value.trim()); };
+  $('gate-token').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') tryToken($('gate-token').value.trim());
+  });
+
+  function tryToken(value) {
+    if (!value) return toast('请先输入管理令牌', 'err');
+    token = value;
+    $('gate-btn').disabled = true;
+    $('gate-btn').textContent = '校验中…';
+    api('/api/admin/whoami')
+      .then(function (res) {
+        sessionStorage.setItem(TOKEN_KEY, token);
+        overview = res;
+        $('gate').hidden = true;
+        $('app').hidden = false;
+        $('chip-version').textContent = 'v' + res.version;
+        $('chip-snapshot').hidden = !res.snapshot;
+        $('chip-source').textContent = '来源 ' + res.source + (res.localOnly ? ' · 仅本机' : ' · 已放开远程');
+        loadAll();
+      })
+      .catch(function (e) { toast(e.message, 'err'); })
+      .finally(function () {
+        $('gate-btn').disabled = false;
+        $('gate-btn').textContent = '进入管理端';
+      });
+  }
+
+  function signOut(msg) {
+    token = '';
+    sessionStorage.removeItem(TOKEN_KEY);
+    $('gate').hidden = false;
+    $('app').hidden = true;
+    $('gate-token').value = '';
+    if (msg) toast(msg, 'err');
+  }
+
+  $('btn-logout').onclick = function () { signOut('已退出管理端'); };
+
+  /* ---------------------------- 数据加载 ---------------------------- */
+  function loadOverview() {
+    return api('/api/admin/overview').then(function (d) {
+      var t = d.totals;
+      var cards = [
+        ['同步账号', t.users, '启用 ' + t.activeUsers + ' 个'],
+        ['配置项', t.entities, '已软删 ' + t.deletedEntities + ' 项'],
+        ['有效令牌', t.activeTokens, '有效期 ' + d.tokenTtlDays + ' 天'],
+        ['同步水位', d.rev, '全局单调递增'],
+        ['数据库', fmtSize(d.dbSizeBytes), d.dbFile],
+        ['运行时长', null, '启动于 ' + fmtTime(d.serverTime - d.uptimeSec * 1000)],
+      ];
+      $('overview').innerHTML = cards.map(function (c) {
+        var value = c[0] === '运行时长' ? fmtUptime(d.uptimeSec) : String(c[1]);
+        var small = c[0] === '数据库' || c[0] === '运行时长' ? ' sm' : '';
+        return '<div class="card"><div class="k">' + esc(c[0]) + '</div>' +
+          '<div class="v' + small + '">' + esc(value) + '</div>' +
+          '<div class="sub" title="' + esc(c[2]) + '">' + esc(c[2]) + '</div></div>';
+      }).join('');
+      $('chip-scope').textContent = d.admin.tokenFromEnv ? '令牌来自环境变量' : '令牌来自文件';
+    });
+  }
+
+  function loadUsers() {
+    var qs = '?limit=' + page.limit + '&offset=' + page.offset +
+      '&q=' + encodeURIComponent(page.q) + '&status=' + encodeURIComponent(page.status);
+    return api('/api/admin/users' + qs).then(function (d) {
+      page.total = d.total;
+      $('user-count').textContent = '共 ' + d.total + ' 个账号';
+      var body = $('users-body');
+      if (!d.users.length) {
+        body.innerHTML = '<tr><td colspan="11"><div class="empty">没有匹配的账号</div></td></tr>';
+      } else {
+        body.innerHTML = d.users.map(function (u) {
+          var disabled = u.status !== 'active';
+          return '<tr>' +
+            '<td class="dim">' + u.id + '</td>' +
+            '<td class="mono wrap-any">' + esc(u.email) + '</td>' +
+            '<td><span class="tag ' + (disabled ? 'off' : 'ok') + '">' + (disabled ? '已禁用' : '正常') + '</span></td>' +
+            '<td>' + (u.role === 'admin' ? '<span class="tag admin">管理员</span>' : '<span class="dim">普通</span>') + '</td>' +
+            '<td class="num">' + u.entities + '</td>' +
+            '<td class="num dim">' + u.deletedEntities + '</td>' +
+            '<td class="num">' + u.activeTokens + '</td>' +
+            '<td class="dim" title="' + esc(fmtTime(u.lastLoginAt)) + '">' + esc(u.lastLoginAt ? fmtAgo(u.lastLoginAt) : '—') + '</td>' +
+            '<td class="dim" title="' + esc(fmtTime(u.lastDataAt)) + '">' + esc(u.lastDataAt ? fmtAgo(u.lastDataAt) : '—') + '</td>' +
+            '<td class="wrap-any dim">' + esc(u.note || '') + '</td>' +
+            '<td>' +
+              '<button class="mini" data-act="toggle" data-id="' + u.id + '" data-next="' + (disabled ? 'active' : 'disabled') + '">' + (disabled ? '启用' : '禁用') + '</button> ' +
+              '<button class="mini" data-act="password" data-id="' + u.id + '" data-email="' + esc(u.email) + '">重置密码</button> ' +
+              '<button class="mini" data-act="revoke" data-id="' + u.id + '" data-email="' + esc(u.email) + '">吊销令牌</button> ' +
+              '<button class="mini danger" data-act="delete" data-id="' + u.id + '" data-email="' + esc(u.email) + '" data-count="' + u.entities + '">删除</button>' +
+            '</td>' +
+          '</tr>';
+        }).join('');
+      }
+      var from = d.total === 0 ? 0 : d.offset + 1;
+      var to = Math.min(d.offset + d.users.length, d.total);
+      $('page-info').textContent = '显示 ' + from + '–' + to + ' / 共 ' + d.total + ' 条';
+      $('btn-prev').disabled = d.offset <= 0;
+      $('btn-next').disabled = d.offset + d.limit >= d.total;
+    });
+  }
+
+  function loadAudit() {
+    return api('/api/admin/audit?limit=60').then(function (d) {
+      var body = $('audit-body');
+      if (!d.items.length) {
+        body.innerHTML = '<tr><td colspan="5"><div class="empty">暂无管理操作记录</div></td></tr>';
+        return;
+      }
+      body.innerHTML = d.items.map(function (a) {
+        return '<tr>' +
+          '<td class="dim">' + esc(fmtTime(a.at)) + '</td>' +
+          '<td class="mono">' + esc(a.action) + '</td>' +
+          '<td class="mono">' + esc(a.targetEmail || (a.targetUserId ? '#' + a.targetUserId : '—')) + '</td>' +
+          '<td class="wrap-any dim">' + esc(a.detail || '') + '</td>' +
+          '<td class="mono dim">' + esc(a.ip || '') + '</td>' +
+        '</tr>';
+      }).join('');
+    });
+  }
+
+  function platformLabel(p) {
+    return p === 'win' ? 'Windows' : p === 'mac' ? 'macOS' : p === 'linux' ? 'Linux' : p;
+  }
+
+  /** 文件名 → base64url（中文名塞 URL 会出事，服务端按 base64url 解） */
+  function b64url(str) {
+    var bytes = new TextEncoder().encode(str);
+    var bin = '';
+    for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+
+  function loadReleases() {
+    return api('/api/admin/releases?limit=200').then(function (d) {
+      releases = d.releases;
+      $('rel-info').textContent = '共 ' + d.total + ' 个安装包 · 占用 ' + fmtSize(d.totalBytes) +
+        ' · 单包上限 ' + d.maxMb + 'MB';
+      var body = $('releases-body');
+      if (!d.releases.length) {
+        body.innerHTML = '<tr><td colspan="11"><div class="empty">还没有发布过客户端安装包</div></td></tr>';
+        return;
+      }
+      body.innerHTML = d.releases.map(function (r) {
+        var label = r.version + ' ' + r.platform + '-' + r.arch;
+        return '<tr>' +
+          '<td class="dim">' + r.id + '</td>' +
+          '<td><b>' + esc(r.version) + '</b></td>' +
+          '<td>' + esc(platformLabel(r.platform)) + '</td>' +
+          '<td class="dim">' + esc(r.arch) + '</td>' +
+          '<td><span class="tag">' + esc(r.channel) + '</span></td>' +
+          '<td class="num">' + fmtSize(r.size) + '</td>' +
+          '<td class="num dim">' + r.downloads + '</td>' +
+          '<td class="dim" title="' + esc(fmtTime(r.publishedAt)) + '">' + esc(fmtAgo(r.publishedAt)) + '</td>' +
+          '<td class="mono wrap-any">' + esc(r.fileName) + '</td>' +
+          '<td class="wrap-any dim">' + esc(r.notes || '') + '</td>' +
+          '<td>' +
+            '<button class="mini" data-rel-act="copy" data-id="' + r.id + '">复制地址</button> ' +
+            '<button class="mini danger" data-rel-act="delete" data-id="' + r.id +
+              '" data-label="' + esc(label) + '">删除</button>' +
+          '</td>' +
+        '</tr>';
+      }).join('');
+    });
+  }
+
+  function loadAll() {
+    return Promise.all([loadOverview(), loadUsers(), loadReleases(), loadAudit()]).catch(function (e) {
+      toast(e.message, 'err');
+    });
+  }
+
+  /* ---------------------------- 交互 ---------------------------- */
+  $('btn-refresh').onclick = function () { loadAll().then(function () { toast('已刷新', 'ok'); }); };
+  $('btn-search').onclick = function () { page.q = $('q').value.trim(); page.status = $('f-status').value; page.offset = 0; loadUsers().catch(function (e) { toast(e.message, 'err'); }); };
+  $('q').addEventListener('keydown', function (e) { if (e.key === 'Enter') $('btn-search').click(); });
+  $('f-status').addEventListener('change', function () { $('btn-search').click(); });
+  $('btn-prev').onclick = function () { page.offset = Math.max(0, page.offset - page.limit); loadUsers().catch(function (e) { toast(e.message, 'err'); }); };
+  $('btn-next').onclick = function () { page.offset += page.limit; loadUsers().catch(function (e) { toast(e.message, 'err'); }); };
+
+  $('btn-create').onclick = function () {
+    var email = $('new-email').value.trim();
+    var password = $('new-password').value;
+    var note = $('new-note').value.trim();
+    var role = $('new-role').value;
+    if (!email) return toast('请填写邮箱', 'err');
+    if (!password || password.length < 6) return toast('密码至少 6 位', 'err');
+    var btn = $('btn-create');
+    btn.disabled = true;
+    api('/api/admin/users', { method: 'POST', body: { email: email, password: password, note: note, role: role } })
+      .then(function () {
+        toast('已创建账号 ' + email, 'ok');
+        $('new-email').value = '';
+        $('new-password').value = '';
+        $('new-note').value = '';
+        $('new-role').value = 'user';
+        return loadAll();
+      })
+      .catch(function (e) { toast(e.message, 'err'); })
+      .finally(function () { btn.disabled = false; });
+  };
+
+  $('users-body').addEventListener('click', function (e) {
+    var btn = e.target.closest('button[data-act]');
+    if (!btn) return;
+    var act = btn.dataset.act;
+    var id = Number(btn.dataset.id);
+    var email = btn.dataset.email || '';
+    var label = email || ('#' + id);
+
+    if (act === 'toggle') {
+      var next = btn.dataset.next;
+      var question = next === 'disabled'
+        ? '禁用 ' + label + ' 后，该账号所有登录令牌立即失效，无法再同步。\n\n确定禁用？'
+        : '确定重新启用 ' + label + '？';
+      if (!confirm(question)) return;
+      api('/api/admin/users/' + id, { method: 'PATCH', body: { status: next } })
+        .then(function (d) {
+          toast('已' + (next === 'disabled' ? '禁用' : '启用') + ' ' + label +
+            (d.changes ? '（' + d.changes.join('，') + '）' : ''), 'ok');
+          return loadAll();
+        })
+        .catch(function (err) { toast(err.message, 'err'); });
+      return;
+    }
+
+    if (act === 'password') {
+      var pwd = prompt('为 ' + label + ' 设置新密码（至少 6 位）\n注意：重置后该账号所有设备会被强制下线。');
+      if (pwd === null) return;
+      if (pwd.length < 6) return toast('密码至少 6 位', 'err');
+      api('/api/admin/users/' + id, { method: 'PATCH', body: { password: pwd } })
+        .then(function (d) { toast('已重置密码（' + (d.changes || []).join('，') + '）', 'ok'); return loadAll(); })
+        .catch(function (err) { toast(err.message, 'err'); });
+      return;
+    }
+
+    if (act === 'revoke') {
+      if (!confirm('吊销 ' + label + ' 的全部登录令牌？\n该账号所有设备需重新登录。')) return;
+      api('/api/admin/users/' + id + '/tokens/revoke', { method: 'POST' })
+        .then(function (d) { toast('已吊销 ' + d.revoked + ' 个令牌', 'ok'); return loadAll(); })
+        .catch(function (err) { toast(err.message, 'err'); });
+      return;
+    }
+
+    if (act === 'delete') {
+      var n = btn.dataset.count;
+      if (!confirm('永久删除 ' + label + '？\n\n将同时删除该账号的 ' + n + ' 项配置数据与全部令牌，不可撤销。')) return;
+      if (!confirm('再次确认：删除后无法恢复。')) return;
+      api('/api/admin/users/' + id, { method: 'DELETE' })
+        .then(function (d) { toast('已删除 ' + d.deleted.email + '（清理 ' + d.deleted.entities + ' 项配置）', 'ok'); return loadAll(); })
+        .catch(function (err) { toast(err.message, 'err'); });
+      return;
+    }
+  });
+
+  /* ---------------------------- 客户端发布 ---------------------------- */
+  function setProgress(pct, text, cls) {
+    var bar = $('rel-progress-bar');
+    bar.style.width = pct + '%';
+    bar.className = 'progress-bar' + (cls ? ' ' + cls : '');
+    $('rel-progress-text').textContent = text;
+  }
+
+  /**
+   * 从文件名猜出版本号，例如 MyApiTools-Setup-1.2.0-x64.exe → 1.2.0
+   *
+   * 不能拿 /(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)/ 直接取：后缀那段的字符集含 `.` 和
+   * 字母数字，会把架构尾巴整段吃掉 —— `1.2.0-x64.exe` 会被读成「1.2.0 + 后缀 x64.exe」，
+   * 而发布校验正则和服务端 parseVersion 都放它过关，于是"发布成功、版本号却是垃圾"。
+   * 带 -dev 的文件名碰巧不出问题（后缀在 `-x64` 的那个 `-` 前就停了），所以这个坑专门
+   * 咬不带后缀的正式版文件名。这里显式剥掉尾部的平台/架构段，两种形态都对。
+   */
+  function inferVersionFromName(name) {
+    var m = /(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)/.exec(String(name || ''));
+    if (!m) return '';
+    return m[1].replace(/-(x64|arm64|ia32|armv7l|win|mac|linux)(\.[A-Za-z0-9]+)?$/i, '');
+  }
+
+  /** 从文件名猜出版本 / 平台 / 架构，例如 MyApiTools-Setup-1.2.0-x64.exe */
+  $('rel-file').addEventListener('change', function () {
+    var f = this.files && this.files[0];
+    if (!f) return;
+    var name = f.name;
+
+    var guessed = inferVersionFromName(name);
+    if (guessed) $('rel-version').value = guessed;
+
+    var am = /(x64|arm64|ia32|armv7l)/i.exec(name);
+    if (am) $('rel-arch').value = am[1].toLowerCase();
+
+    var lower = name.toLowerCase();
+    var platform = /\.dmg$|\.pkg$|mac/i.test(lower) ? 'mac'
+      : /\.exe$|\.msi$|win/i.test(lower) ? 'win'
+        : /\.appimage$|\.deb$|\.rpm$|linux/i.test(lower) ? 'linux' : '';
+    if (platform) $('rel-platform').value = platform;
+
+    setProgress(0, '已选择 ' + name + '（' + fmtSize(f.size) + '），确认下方信息后点「发布」', '');
+  });
+
+  $('btn-release').onclick = function () {
+    var fileInput = $('rel-file');
+    var file = fileInput.files && fileInput.files[0];
+    if (!file) return toast('请先选择安装包文件', 'err');
+
+    var version = $('rel-version').value.trim();
+    if (!/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(version)) {
+      return toast('版本号必须形如 1.2.3（可带 -beta.1 之类的后缀）', 'err');
+    }
+    var channel = $('rel-channel').value.trim() || 'stable';
+    if (!/^[a-z0-9][a-z0-9._-]{0,31}$/.test(channel)) {
+      return toast('渠道名只能是小写字母、数字和 . _ -', 'err');
+    }
+    var platform = $('rel-platform').value;
+    var arch = $('rel-arch').value;
+
+    var dup = releases.some(function (r) {
+      return r.version === version && r.platform === platform && r.arch === arch && r.channel === channel;
+    });
+    if (dup && !confirm('已存在 ' + channel + ' / ' + version + ' ' + platform + '-' + arch +
+      '\n\n继续发布会覆盖旧安装包。确定继续？')) return;
+
+    var qs = new URLSearchParams({
+      version: version,
+      platform: platform,
+      arch: arch,
+      channel: channel,
+      notes: $('rel-notes').value.trim(),
+      name: b64url(file.name),
+    });
+
+    var btn = $('btn-release');
+    btn.disabled = true;
+    $('rel-progress-wrap').hidden = false;
+    setProgress(0, '准备上传 ' + file.name + '（' + fmtSize(file.size) + '）…', '');
+
+    var xhr = new XMLHttpRequest();
+    xhr.open('PUT', '/api/admin/releases?' + qs.toString());
+    xhr.setRequestHeader('content-type', 'application/octet-stream');
+    if (token) xhr.setRequestHeader('x-admin-token', token);
+
+    xhr.upload.onprogress = function (e) {
+      if (!e.lengthComputable) return;
+      var pct = Math.round((e.loaded / e.total) * 100);
+      setProgress(pct, '上传中 ' + pct + '%（' + fmtSize(e.loaded) + ' / ' + fmtSize(e.total) + '）', '');
+    };
+    xhr.onload = function () {
+      var data = null;
+      try { data = JSON.parse(xhr.responseText || 'null'); } catch (e) { data = null; }
+      btn.disabled = false;
+      if (xhr.status === 401) {
+        setProgress(0, '上传失败：管理令牌已失效', 'fail');
+        signOut('管理令牌已失效，请重新输入');
+        return;
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        var verb = data && data.replaced ? '已覆盖 ' : '已发布 ';
+        setProgress(100, verb + version + ' · ' + platform + '-' + arch + '（' + fmtSize(file.size) + '）', 'done');
+        toast(verb + version + '（' + platform + '-' + arch + '）', 'ok');
+        fileInput.value = '';
+        loadAll();
+      } else {
+        setProgress(0, '上传失败：' + ((data && data.message) || ('HTTP ' + xhr.status)), 'fail');
+        toast((data && data.message) || ('上传失败 HTTP ' + xhr.status), 'err');
+      }
+    };
+    xhr.onerror = function () {
+      btn.disabled = false;
+      setProgress(0, '上传失败：连接中断', 'fail');
+      toast('上传失败：连接中断（安装包太大时请确认服务端 RELEASE_MAX_MB）', 'err');
+    };
+    xhr.send(file);
+  };
+
+  $('releases-body').addEventListener('click', function (e) {
+    var btn = e.target.closest('button[data-rel-act]');
+    if (!btn) return;
+    var id = Number(btn.dataset.id);
+
+    if (btn.dataset.relAct === 'copy') {
+      var url = location.origin + '/api/releases/download/' + id;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url).then(
+          function () { toast('已复制下载地址（需登录令牌才可下载）', 'ok'); },
+          function () { window.prompt('复制这个地址：', url); }
+        );
+      } else {
+        window.prompt('复制这个地址：', url);
+      }
+      return;
+    }
+
+    if (btn.dataset.relAct === 'delete') {
+      var label = btn.dataset.label || ('#' + id);
+      if (!confirm('删除发布 ' + label + '？\n\n服务端上的安装包文件会一并删除，已装上旧版的客户端不受影响。')) return;
+      api('/api/admin/releases/' + id, { method: 'DELETE' })
+        .then(function () { toast('已删除发布 ' + label, 'ok'); return loadAll(); })
+        .catch(function (err) { toast(err.message, 'err'); });
+    }
+  });
+
+  /* ---------------------------- 启动 ---------------------------- */
+  var saved = sessionStorage.getItem(TOKEN_KEY);
+  if (saved) {
+    token = saved;
+    $('gate-token').value = saved;
+    tryToken(saved);
+  } else {
+    $('gate-token').focus();
+  }
+})();
+</script>
+</body>
+</html>

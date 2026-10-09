@@ -1,0 +1,34 @@
+# 构建上下文瘦身：Dockerfile 只需要 package.json / server.js / admin.html
+# 其余一律不进 builder，避免把本机数据打进镜像层缓存。
+
+# 运行期数据（数据库、管理端令牌、已发布安装包）——绝对不能进镜像
+data/
+releases/
+*.db
+*.db-journal
+*.db-wal
+admin-token.txt
+*.admin-token.txt
+
+# 文档与部署示例
+README.md
+docs/
+deploy/
+
+# 构建/发布脚本
+build-push.sh
+build-push.ps1
+
+# 测试
+test-e2e.js
+test-*.js
+
+# 本地零碎
+.git/
+.gitignore
+.dockerignore
+Dockerfile
+docker-compose.yml
+*.log
+.DS_Store
+Thumbs.db

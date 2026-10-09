@@ -1,0 +1,29 @@
+{
+  "name": "my-api-tools",
+  "version": "0.0.1-dev",
+  "description": "轻量 API 调试工具：本地执行请求，远端仅同步配置",
+  "main": "electron/main.js",
+  "private": true,
+  "scripts": {
+    "start": "node tools/run-electron.js",
+    "smoke": "node tools/run-electron.js --smoke",
+    "server": "node server/server.js",
+    "server:init": "node server/server.js --init-only",
+    "test": "node tools/run-all-tests.js",
+    "test:http": "node electron/test-http-client.js",
+    "test:server": "node server/test-e2e.js",
+    "test:importers": "node tools/test-importers.mjs",
+    "test:vars": "node tools/test-vars.mjs",
+    "test:syntax": "node --experimental-vm-modules tools/check-syntax.js",
+    "test:sync": "node tools/test-sync-client.js",
+    "test:update": "node tools/test-update-client.js",
+    "dist": "electron-builder --config electron-builder.yml",
+    "dist:win": "powershell -ExecutionPolicy Bypass -File tools/dist.ps1"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^26.15.3"
+  },
+  "author": "",
+  "license": "MIT"
+}

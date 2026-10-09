@@ -1,0 +1,43 @@
+services:
+  myapitools-sync:
+    build: .
+    # 镜像 tag 固定用 latest：这里是本地 `build: .` 出来的镜像，不走 registry、
+    # 也不会被 pull，带版本号的 tag 只是备注，反而多一个会跟代码漂移的数字。
+    # 服务端真实版本号只有一个来源 —— server/package.json 的 version。
+    image: myapitools-sync:latest
+    container_name: myapitools-sync
+    restart: unless-stopped
+    # 只绑宿主回环：服务本身给多设备同步用，但管理端不该出现在公网上。
+    # 需要远程访问时，走 SSH 隧道（ssh -L 8787:127.0.0.1:8787 user@host）
+    # 或者在前面挂一层网关，比直接把端口开到 0.0.0.0 安全得多。
+    ports:
+      - "127.0.0.1:8787:8787"
+    environment:
+      PORT: "8787"
+      HOST: "0.0.0.0"
+      DB_FILE: "/app/data/sync.db"
+      TOKEN_TTL_DAYS: "30"
+      # ---------- 管理端 ----------
+      # 令牌随数据卷一起持久化，首次启动自动生成，别把它提交到版本库
+      ADMIN_TOKEN_FILE: "/app/data/admin-token.txt"
+      # 容器里来源 IP 是 docker 网桥地址（默认 172.17.0.1），回环限制用不上。
+      # 两行必须成对出现：只关 LOCAL_ONLY 而白名单为空的话，它是空集，
+      # 除回环外一律 404 —— 看起来就像管理端根本没启用。
+      ADMIN_LOCAL_ONLY: "0"
+      ADMIN_ALLOW: "*"
+      # 只想跑同步、不需要管理端时改成 "1"，/admin 与 /api/admin/* 会直接 404
+      ADMIN_DISABLED: "0"
+      # 想收窄来源就把 * 换成具体网段，例如 "172.17.0.1" 或 "172.*"
+      # ADMIN_ALLOW: "172.*"
+      # 或者干脆用环境变量直接指定令牌（优先级高于令牌文件）
+      # ADMIN_TOKEN: "换成你自己的长随机串"
+      # ---------- 客户端发布 ----------
+      # 安装包仓库：跟着数据卷持久化，升级镜像不丢已发布的版本
+      RELEASES_DIR: "/app/data/releases"
+      # 单个安装包上限（MB）。Electron 安装包通常 70~120MB，默认为 500
+      RELEASE_MAX_MB: "500"
+      # 默认发布渠道，客户端按渠道取不同的版本线
+      RELEASE_CHANNEL: "stable"
+      TZ: "Asia/Shanghai"
+    volumes:
+      - ./data:/app/data

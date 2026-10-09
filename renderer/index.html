@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self' app:; script-src 'self' app:; style-src 'self' 'unsafe-inline'; img-src 'self' data: app:; font-src 'self' app:; connect-src 'self' app:;" />
+  <title>MyApiTools</title>
+  <link rel="stylesheet" href="css/app.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- ============ 顶栏 ============ -->
+    <header id="topbar">
+      <div class="brand">
+        <span class="brand-mark">M</span>
+        <span class="brand-name">MyApiTools</span>
+      </div>
+
+      <div class="topbar-center">
+        <button id="env-picker" class="env-picker" type="button" title="切换环境">
+          <span class="env-dot"></span>
+          <span id="env-picker-label">未选择环境</span>
+          <span class="caret">▾</span>
+        </button>
+        <div class="topbar-search">
+          <input id="global-search" type="search" placeholder="搜索请求…  (Ctrl+K)" autocomplete="off" spellcheck="false" />
+          <div id="search-results" class="search-results" hidden></div>
+        </div>
+      </div>
+
+      <div class="topbar-right">
+        <button id="btn-runner" class="icon-btn" type="button" title="批量执行">▶ 批量执行</button>
+        <button id="btn-sync" class="icon-btn sync-btn" type="button" title="同步状态">
+          <span id="sync-dot" class="sync-dot off"></span>
+          <span id="sync-label">未连接</span>
+        </button>
+        <button id="btn-settings" class="icon-btn" type="button" title="设置">
+          ⚙<span id="update-dot" class="update-dot" hidden></span>
+        </button>
+      </div>
+    </header>
+
+    <!-- ============ 主体 ============ -->
+    <div id="main">
+      <aside id="sidebar">
+        <div class="sidebar-tabs">
+          <button class="stab active" data-tab="collections" type="button">集合</button>
+          <button class="stab" data-tab="history" type="button">历史</button>
+          <div class="sidebar-actions">
+            <button id="btn-new-request" class="mini-btn" type="button" title="新建请求 (Ctrl+N)">＋ 请求</button>
+            <button id="btn-new-folder" class="mini-btn ghost" type="button" title="新建文件夹 (Ctrl+Shift+N)">＋ 文件夹</button>
+          </div>
+        </div>
+        <div id="sidebar-body" class="sidebar-body"></div>
+      </aside>
+
+      <div id="splitter" class="splitter" title="拖动调整宽度"></div>
+
+      <section id="workspace">
+        <div id="tabbar" class="tabbar"></div>
+        <div id="panes" class="panes"></div>
+      </section>
+    </div>
+
+    <!-- ============ 状态栏 ============ -->
+    <footer id="statusbar">
+      <span id="status-left" class="status-item">就绪</span>
+      <span class="status-spacer"></span>
+      <span id="status-env" class="status-item"></span>
+      <span id="status-sync" class="status-item"></span>
+      <span id="status-store" class="status-item" title="本地数据文件位置">—</span>
+    </footer>
+  </div>
+
+  <div id="context-menu" class="context-menu" hidden></div>
+  <div id="modal-root" class="modal-root" hidden></div>
+  <div id="toast-root" class="toast-root"></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
