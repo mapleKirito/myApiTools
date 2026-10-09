@@ -565,7 +565,10 @@ export function initSettingsEvents(root) {
     updateSettings({ update: { channel: ch } });
     // 切渠道后重绘卡片，让下拉与文案都反映新渠道
     for (const pane of settingsPanes()) paintUpdateCard(pane);
-    toastOk(ch === 'dev' ? '已切换到开发版渠道（dev）' : '已切换到正式版渠道（stable）');
+    toastOk((ch === 'dev' ? '已切换到开发版渠道（dev）' : '已切换到正式版渠道（stable）') + '，正在检查该渠道最新版本');
+    // 切渠道后主动按新渠道检查一次：有更新会直接弹窗，无更新则卡片显示「已是最新」。
+    // silent 避免与上面的提示重复刷屏；未登录/未配服务地址时 checkForUpdate 会自行落到对应状态。
+    checkForUpdate({ silent: true });
   });
 
   /* ---------- 客户端更新 ---------- */
