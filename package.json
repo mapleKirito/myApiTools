@@ -2,6 +2,10 @@
   "name": "my-api-tools",
   "version": "0.0.1-dev",
   "description": "轻量 API 调试工具：本地执行请求，远端仅同步配置",
+  "author": {
+    "name": "zhouye1",
+    "email": "zhouye@sdas.org"
+  },
   "main": "electron/main.js",
   "private": true,
   "scripts": {
@@ -24,6 +28,5 @@
     "electron": "^33.2.0",
     "electron-builder": "^26.15.3"
   },
-  "author": "",
   "license": "MIT"
 }
