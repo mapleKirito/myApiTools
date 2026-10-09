@@ -1,11 +1,18 @@
 name: Build Desktop App
 
-# 推 v* 标签：三平台构建并发布到 GitHub Release
-# 手动触发（workflow_dispatch）：只构建并产出 Actions artifacts，不发 Release
+# 触发规则：
+#   push tag v*          -> 三平台构建 + 创建 GitHub Release（tag 即正式发布点）
+#   push branch          -> 仅构建、产出 Actions artifacts，不发 Release（迭代期重复验证用）
+#   workflow_dispatch    -> 手动触发，仅构建不发 Release（任意分支都能点）
+# 注意：发 Release 只看 tag。分支推送和手动触发都只跑 build job，release job 会被 if 跳过。
 on:
   push:
     tags:
       - 'v*'
+    branches:
+      - main
+      - 'dev/**'
+      - 'ver/**'
   workflow_dispatch:
 
 # 创建 Release 需要对 contents 写权限
