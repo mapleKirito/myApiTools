@@ -742,6 +742,15 @@ pre.code-block {
   border-radius: var(--radius); outline: none;
 }
 .form-row input:focus { border-color: var(--accent-line); }
+/* 下拉与输入框保持同一深色风格，否则原生 select 白底 + 浅色字会看不清 */
+.form-row select {
+  height: 30px; padding: 0 28px 0 10px; min-width: 240px;
+  background: var(--bg-2); border: 1px solid var(--border);
+  border-radius: var(--radius); outline: none; color: var(--text);
+  color-scheme: dark;
+}
+.form-row select:focus { border-color: var(--accent-line); }
+.form-row select option { background: var(--bg-2); color: var(--text); }
 .form-row .desc { font-size: 11px; color: var(--text-3); flex-basis: 100%; margin-left: 142px; margin-top: -4px; }
 
 .switch { position: relative; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
