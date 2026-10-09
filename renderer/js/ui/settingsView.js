@@ -255,7 +255,17 @@ function paintUpdateCard(pane) {
   const lastChecked = st.checkedAt
     ? `上次检查 ${escapeHtml(formatRelative(st.checkedAt))}`
     : '尚未检查';
-  const channelText = `更新渠道 ${escapeHtml(u.channel || 'stable')}`;
+  // 更新渠道：正式版 stable / 开发版 dev。仅本机偏好，不参与同步。
+  const ch = (u.channel || 'stable') === 'dev' ? 'dev' : 'stable';
+  const channelRow = `
+    <div class="form-row" style="margin-top:10px">
+      <label>更新渠道</label>
+      <select data-upd-channel>
+        <option value="stable" ${ch === 'stable' ? 'selected' : ''}>正式版（stable）</option>
+        <option value="dev" ${ch === 'dev' ? 'selected' : ''}>开发版（dev）</option>
+      </select>
+      <span class="desc">仅本机生效，不参与同步。测试用户请选「开发版」。</span>
+    </div>`;
 
   card.innerHTML = html`
     <div class="update-card-head">
@@ -278,8 +288,9 @@ function paintUpdateCard(pane) {
 
     <div class="field-hint" data-role="upd-sub" style="margin-top:10px">${raw(sub)}</div>
     ${ignoredHint ? raw(`<div class="field-hint text-warn" data-role="upd-ignored" style="margin-top:6px">${ignoredHint}</div>`) : ''}
+    ${raw(channelRow)}
     <div class="field-hint" style="margin-top:6px">
-      ${channelText} · ${lastChecked} · 安装包从同步服务下载并校验 sha256 后才会唤起安装程序。
+      ${lastChecked} · 安装包从同步服务下载并校验 sha256 后才会唤起安装程序。
     </div>
   `;
 }
@@ -546,6 +557,15 @@ export function initSettingsEvents(root) {
       rerender(el);
       return;
     }
+  });
+
+  /* ---------- 更新渠道切换（stable / dev） ---------- */
+  on(root, 'change', '[data-upd-channel]', (_e, el) => {
+    const ch = el.value === 'dev' ? 'dev' : 'stable';
+    updateSettings({ update: { channel: ch } });
+    // 切渠道后重绘卡片，让下拉与文案都反映新渠道
+    for (const pane of settingsPanes()) paintUpdateCard(pane);
+    toastOk(ch === 'dev' ? '已切换到开发版渠道（dev）' : '已切换到正式版渠道（stable）');
   });
 
   /* ---------- 客户端更新 ---------- */

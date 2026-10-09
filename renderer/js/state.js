@@ -444,6 +444,11 @@ export function updateSettings(patch) {
   if (patch.sync) {
     next.sync = { ...state.workspace.settings.sync, ...patch.sync };
   }
+  // update 与 sync 一样是子对象：直接整块替换会把 enabled/ignoredVersion 等抹掉，
+  // 所以这里也要按子对象合并。
+  if (patch.update) {
+    next.update = { ...state.workspace.settings.update, ...patch.update };
+  }
   state.workspace.settings = next;
   scheduleSave();
   bus.emit('change');
