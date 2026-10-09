@@ -36,22 +36,15 @@ jobs:
             platform: win
             artifacts: |
               dist/*.exe
-              dist/*.blockmap
-              dist/*.yml
           - os: macos-latest
             platform: mac
             artifacts: |
               dist/*.dmg
-              dist/*.zip
-              dist/*.blockmap
-              dist/*.yml
           - os: ubuntu-latest
             platform: linux
             artifacts: |
               dist/*.AppImage
               dist/*.deb
-              dist/*.blockmap
-              dist/*.yml
 
     steps:
       - name: Checkout
@@ -110,7 +103,8 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          # artifacts/**/* 会把三平台的安装包、blockmap、latest.yml 全部传上去
+          # artifacts/**/* 只包含三平台的安装包本体（exe / dmg / AppImage / deb），
+          # blockmap、latest*.yml、builder-debug.yml 已在上传阶段过滤掉
           files: artifacts/**/*
           # 自动根据合并的 PR 和提交生成更新日志
           generate_release_notes: true
