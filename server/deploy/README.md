@@ -99,8 +99,11 @@ environment:
 
 1. 8787 保持只绑 `127.0.0.1`，网关反代到它；
 2. 网关必须有有效证书 —— 客户端会校验 TLS；
-3. 把 `ADMIN_DISABLED` 设为 `1`（管理端不对外）；
-4. 考虑在网关层加 IP 白名单或基础认证。
+3. 管理端**不要**用 `ADMIN_DISABLED=1` 关掉（否则 SSH 隧道也进不去）；
+   正确做法是保持管理端开启、容器仍只绑 127.0.0.1，并在网关层显式拦截
+   `/admin` 与 `/api/admin/*`（返回 404），让管理端只经 SSH 隧道
+   `ssh -L 8787:127.0.0.1:8787 user@<服务器>` 访问；
+4. 考虑在网关层加 IP 白名单或基础认证（仅在你选「方案 B：经 nginx 暴露管理端」时）。
 
 nginx 片段参考：
 
@@ -124,6 +127,50 @@ server {
 ```
 
 客户端里服务地址填 `https://api-sync.example.com`（不要带端口）。
+
+### 场景 2b：用 nginx-proxy-manager（NPM）图形界面反代
+
+若网关是 NPM 这类容器化面板，上游**不能写 `127.0.0.1`** —— NPM 容器里的
+`127.0.0.1` 是它自己，不是宿主机；而本服务端口发布绑的是宿主机回环
+`127.0.0.1:8787`（专为 SSH 隧道），别的容器经宿主机 IP 也够不到。
+正确做法是把本服务容器**挂进 NPM 所在的 docker 网络**，用容器名互通：
+
+```bash
+# 查 NPM 容器在哪个网络（容器名按实际替换，常见叫 npm）
+docker inspect npm --format '{{range $k,$_ := .NetworkSettings.Networks}}{{$k}}{{"\n"}}{{end}}'
+```
+
+在 `docker-compose.yml` 里追加（`<NPM网络>` 换成上面查到的名字）：
+
+```yaml
+services:
+  myapitools-sync:
+    # ...原有配置全部不动，只追加 networks 一行
+    networks: [proxy]
+
+networks:
+  proxy:
+    external: true
+    name: <NPM网络>
+```
+
+`docker compose up -d` 重建容器，然后在 NPM 界面「添加代理服务」：
+
+- **Details**：域名 `sync.example.com`；Scheme `http`；转发主机 `myapitools-sync`；端口 `8787`
+- **SSL**：申请 Let's Encrypt 证书，勾 Force SSL
+- **Advanced**（自定义 nginx 指令）—— **管理端必须在网关层拦掉**：
+
+```nginx
+client_max_body_size 600m;      # 发安装包必须放开，默认会被挡
+proxy_read_timeout 300s;
+proxy_send_timeout 300s;
+
+location ^~ /admin      { return 404; }
+location ^~ /api/admin/ { return 404; }
+```
+
+管理端照旧走 SSH 隧道：加入新网络不影响 `127.0.0.1:8787` 的端口发布，
+`ssh -L 8787:127.0.0.1:8787 user@<服务器>` 后开 `http://127.0.0.1:8787/admin` 不变。
 
 ### 场景 3：只是想在本机临时用管理端
 
@@ -313,20 +360,28 @@ A：改 compose 左边那个数字，例如 `"127.0.0.1:18787:8787"`，客户端
 docker pull myzhouye/myapitools-server:1.2.0
 ```
 
-发布流程（在源码仓库的 `server/` 目录下执行，需要 Docker Hub 写权限）：
+发布流程（在源码仓库的 `server/` 目录下执行，需要对应仓库的写权限）：
 
 ```bash
-# Linux / macOS
-./build-push.sh
+# 1) 推到 Docker Hub（Linux / macOS 与 Windows PowerShell 各一份）
+./build-push-dockerhub.sh
+.\build-push-dockerhub.ps1
 
-# Windows PowerShell
-.\build-push.ps1
+# 2) 推到阿里云 ACR（境内服务器拉取用，复用上面已构建的镜像，不重复 docker build）
+./build-push-acr.sh
+.\build-push-acr.ps1
 ```
+
+两个脚本都**先检查本地是否已有构建好的 Docker Hub 镜像**（`myzhouye/myapitools-server:<版本号>`）：
+有就直接复用——Docker Hub 版直接推送、ACR 版打 tag 后推送，都不重复 `docker build`；
+本地没有时 Docker Hub 脚本才会现场构建。
 
 脚本读 `server/package.json` 的版本号作为 tag，行为取决于版本号形态：
 
 - **正式版**（`1.2.0`）：tag 已存在时会提示你升版本号或强制覆盖，并同时更新 `latest`；
 - **开发快照版**（`1.2.0-dev`）：tag 已存在时直接覆盖、不再询问，且不动 `latest`。
 
-脚本会读 `server/package.json` 的版本号作为 tag；如果这个 tag 在 Docker Hub 上
-已经存在，会提示你升版本号或强制覆盖。
+> 镜像拉取：本目录 `docker-compose.yml` 默认从 Docker Hub 拉取；境内服务器把 `image`
+> 那行换成阿里云 ACR 地址即可（文件里已有注释示例，前缀规范为
+> `<ACR 域名>/<命名空间>/myapitools-server:<tag>`，默认
+> `registry.cn-hangzhou.aliyuncs.com/myzhouye/myapitools-server`）。
