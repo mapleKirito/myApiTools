@@ -14,7 +14,18 @@
 
 services:
   myapitools-sync:
+    # ── 默认：从 Docker Hub 拉取（公开仓库，境外服务器适用）──
     image: myzhouye/myapitools-server:${MYAPITOOLS_TAG:-latest}
+
+    # ── 阿里云 ACR（推荐境内服务器：Docker Hub 在境内常拉取超时）──
+    #   切到 ACR 只需两步：① 注释掉上面那行 Docker Hub 的 image；② 取消下面这行注释。
+    #   镜像前缀规范：<ACR 域名>/<命名空间>/myapitools-server:<tag>
+    #     默认 ACR 地址：registry.cn-hangzhou.aliyuncs.com/myzhouye/myapitools-server
+    #   公开仓库免登录直接 pull；私有仓库先 `docker login registry.cn-hangzhou.aliyuncs.com`。
+    #   对应推送脚本：同目录仓库的 server/build-push-acr.sh（.ps1），它复用本地已构建的
+    #   Docker Hub 镜像打 tag 后推到 ACR，不会重复 docker build。
+    # image: registry.cn-hangzhou.aliyuncs.com/myzhouye/myapitools-server:${MYAPITOOLS_TAG:-latest}
+
     # 仓库名必须全小写（Docker 的硬性要求），所以这里是 myapitools 不是 myApiTools。
     # 想用你自己的镜像仓库，把上面整行换成你自己的地址即可（不要加 build:）
     container_name: myapitools-sync

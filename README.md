@@ -220,21 +220,28 @@ docker compose up -d
 
 ```bash
 cd server
-./build-push.sh          # Linux / macOS
-.\build-push.ps1         # Windows PowerShell
+./build-push-dockerhub.sh   # Linux / macOS：构建（若本地还没有）并推到 Docker Hub
+.\build-push-dockerhub.ps1  # Windows PowerShell
 ```
 
-镜像名 `myzhouye/myapitools-server`（Docker 要求仓库名全小写），tag 取 `server/package.json` 的版本号。脚本会在推送前查 Docker Hub，行为由版本号形态决定 —— 详见下面的[版本号规则](#版本号规则)：
+**推到阿里云 ACR（境内服务器用，Docker Hub 常拉取超时）：** ACR 脚本**不构建镜像**，复用上面已在本地构建好的 Docker Hub 镜像，直接打 tag 后推送，不会重复 `docker build`。
+
+```bash
+./build-push-acr.sh         # Linux / macOS：把本地镜像打 ACR tag 并推送
+.\build-push-acr.ps1        # Windows PowerShell
+```
+
+镜像名 `myzhouye/myapitools-server`（Docker 要求仓库名全小写），tag 取 `server/package.json` 的版本号。两个脚本都**先检查本地是否已有构建好的 Docker Hub 镜像** —— 有就直接复用（Docker Hub 版直接 push，ACR 版打 tag 后 push），没有才构建。Docker Hub 脚本会在推送前查 Docker Hub，行为由版本号形态决定 —— 详见下面的[版本号规则](#版本号规则)：
 
 - **正式版**（`1.2.0`）：这个 tag 已存在时会让你选择**升版本号**（patch/minor/major/手填，会写回 `package.json`）、**强制覆盖**或中止；并同时更新 `latest`。
 - **开发快照版**（`1.2.0-dev`）：同一 tag 已存在时**直接覆盖、不再询问**，且默认**不动 `latest`** —— 免得 `docker pull :latest` 的人静默拿到开发中的构建。
 
 ```bash
-./build-push.sh --dry-run      # 只检查与提示，不构建不推送
-./build-push.sh --force        # 跳过存在性检查，直接覆盖
-./build-push.sh --no-latest    # 只推版本 tag，不动 latest
-./build-push.sh --latest       # 快照版也更新 latest（默认只有正式版才动）
-./build-push.sh --yes          # 不提问，正式版有冲突即失败退出（CI 用；快照版照常覆盖）
+./build-push-dockerhub.sh --dry-run      # 只检查与提示，不构建不推送
+./build-push-dockerhub.sh --force        # 跳过存在性检查，直接覆盖
+./build-push-dockerhub.sh --no-latest    # 只推版本 tag，不动 latest
+./build-push-dockerhub.sh --latest       # 快照版也更新 latest（默认只有正式版才动）
+./build-push-dockerhub.sh --yes          # 不提问，正式版有冲突即失败退出（CI 用；快照版照常覆盖）
 ```
 
 脚本**只在 push 真的成功之后才会说「发布完成」**。推送被拒（没登录 / 没写权限）或网络中断时，它会明确报出
@@ -243,7 +250,7 @@ cd server
 
 > **「本地构建成功」不等于「远端已有」。** `docker compose up -d` 在本地已存在该镜像时**不会**去远端拉
 > （compose 默认 `pull_policy: missing`），所以本地构建后直接 `up` 能起来，并不能说明别人 `pull` 得到。
-> 想确认远端到底有没有，跑一次 `docker compose pull`；或看 `build-push` 结尾有没有 `✓ 已推送`。
+> 想确认远端到底有没有，跑一次 `docker compose pull`；或看 `build-push-dockerhub` / `build-push-acr` 结尾有没有 `✓ 已推送`。
 
 ---
 
@@ -379,7 +386,7 @@ npm run dist
 
 同一套规则落在三个地方，行为一致：
 
-- `server/build-push.sh` / `build-push.ps1` —— 决定要不要覆盖远端 tag、要不要动 `latest`；
+- `server/build-push-dockerhub.sh` / `.ps1` —— 构建（若本地还没有）并推到 Docker Hub；`server/build-push-acr.sh` / `.ps1` —— 复用本地已构建的镜像打 tag 后推到阿里云 ACR（不重复构建）；两个脚本都决定要不要覆盖远端 tag、要不要动 `latest`；
 - `server/server.js` —— 启动横幅标注「开发快照版」，`/api/health` 与 `/api/admin/overview` 返回 `snapshot` 字段，管理页据此显示黄色「快照版」徽标；
 - `compareVersion()` —— 同号时正式版压过快照版（`1.2.0-dev < 1.2.0`），所以**跑正式版的客户端不会被同号的开发构建顶掉**；快照的版号本身更高时（如 `2.0.0-dev > 1.10.0`）它确实更新，照常提示。
 
@@ -429,8 +436,10 @@ myApiTools/
 │   ├── admin.html             管理页面（单文件，无外部依赖）
 │   ├── package.json           唯一版本号来源（`require('./package.json').version`）
 │   ├── test-e2e.js
-│   ├── build-push.sh          构建并推送镜像（Linux / macOS）
-│   ├── build-push.ps1         构建并推送镜像（Windows PowerShell）
+│   ├── build-push-dockerhub.sh  构建并推送镜像到 Docker Hub（Linux / macOS）
+│   ├── build-push-dockerhub.ps1 构建并推送镜像到 Docker Hub（Windows PowerShell）
+│   ├── build-push-acr.sh        把本地镜像打 tag 推到阿里云 ACR（Linux / macOS，不构建）
+│   ├── build-push-acr.ps1       把本地镜像打 tag 推到阿里云 ACR（Windows PowerShell，不构建）
 │   ├── Dockerfile
 │   ├── .dockerignore          只让三个载荷文件进构建上下文
 │   ├── docker-compose.yml     开发用：build: . 现场构建

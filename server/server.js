@@ -62,7 +62,7 @@ const VERSION = require('./package.json').version;
  *
  * 这里只用来在启动横幅、/api/health、管理页上「说清楚跑的是哪一种」，
  * 不做任何行为分支 —— 服务端行为不因版本形态而变。镜像的 tag 覆盖策略
- * 由 server/build-push.sh（.ps1）按同一规则执行。
+ * 由 server/build-push-dockerhub.sh（.ps1）按同一规则执行。
  */
 const IS_SNAPSHOT = /-dev(\.|$)/.test(String(VERSION));
 
@@ -1501,7 +1501,7 @@ server.listen(PORT, HOST, () => {
   // （同一个版本号，昨天和今天的行为不一样），所以启动时主动说清楚。
   if (IS_SNAPSHOT) {
     console.log(`  ! 当前跑的是开发快照版 ${VERSION}（-dev）—— 内容可能随时被覆盖更新，别当正式版用。`);
-    console.log('    要发正式版：把 server/package.json 的版本号去掉 -dev 后缀，再用 build-push 推。');
+    console.log('    要发正式版：把 server/package.json 的版本号去掉 -dev 后缀，再用 build-push-dockerhub（推 Docker Hub）/ build-push-acr（推阿里云 ACR）推。');
     console.log('  ---------------------------------------------');
   }
 
