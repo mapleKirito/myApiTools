@@ -19,6 +19,7 @@ import {
   getRequest,
   setActiveEnv,
   commit,
+  createRequest,
 } from './state.js';
 import { escapeHtml, methodColor, methodColor as mc, formatRelative, clone, uid } from './helpers.js';
 import { sendFromTab, renderRequestPane, renderRequestSubtabs, renderRequestBody, initRequestEvents } from './ui/requestView.js';
@@ -27,7 +28,7 @@ import { renderSidebar, initSidebar, searchRequests } from './ui/sidebar.js';
 import { renderEnvPane, renderEnvContent, initEnvEvents } from './ui/envView.js';
 import { renderRunnerPane, renderRunnerContent, initRunnerEvents, getRunnerState, runRequestsDirect, runFolderDirect } from './ui/runnerView.js';
 import { renderSettingsPane, renderSettingsContent, initSettingsEvents } from './ui/settingsView.js';
-import { importFromText, toPostmanCollection, toCurl } from './importers.js';
+import { importFromText, parseCurl, toPostmanCollection, toCurl } from './importers.js';
 import { initSyncEngine, syncNow, syncCfg, setStatus } from './sync.js';
 import { initUpdate, scheduleStartupCheck, checkForUpdate, updateState } from './update.js';
 
@@ -550,6 +551,113 @@ async function showImportDialog() {
   });
 }
 
+/* -------------------------------------------------------------------- *
+ * 从 cURL 新建请求
+ * -------------------------------------------------------------------- */
+const BODY_MODE_LABEL = {
+  none: '无',
+  json: 'JSON',
+  text: '文本',
+  xml: 'XML',
+  'form-urlencoded': '表单 x-www-form-urlencoded',
+  'form-data': '表单 form-data',
+  graphql: 'GraphQL',
+  binary: '二进制',
+};
+
+/** 从 URL 里取一个像样的请求名，取不到就退回默认名 */
+function curlRequestName(curlUrl) {
+  const noQuery = String(curlUrl || '').replace(/[?#].*$/, '');
+  try {
+    const u = new URL(noQuery);
+    const segs = u.pathname.split('/').filter(Boolean);
+    return segs.length ? decodeURIComponent(segs[segs.length - 1]) : (u.hostname || 'cURL 请求');
+  } catch {
+    const segs = noQuery.split('/').filter(Boolean);
+    return segs.length ? segs[segs.length - 1] : 'cURL 请求';
+  }
+}
+
+/** 空白新建请求：新建默认请求并打开编辑页 */
+function startNewRequest(collectionId = null) {
+  const req = createRequest(collectionId);
+  state.sidebarTab = 'collections';
+  qsa('.stab').forEach((b) => b.classList.toggle('active', b.dataset.tab === 'collections'));
+  renderSidebar();
+  openTab({ type: 'request', refId: req.id });
+  return req;
+}
+
+/** 粘贴 cURL 命令，解析后直接构建成一个请求 */
+function showCurlRequestDialog(collectionId = null) {
+  openModal({
+    title: '从 cURL 新建请求',
+    wide: true,
+    bodyHtml: `
+      <div class="field-hint" style="margin-bottom:12px">
+        粘贴一段完整的 <b>cURL</b> 命令（例如浏览器 DevTools 里的 Copy as cURL），
+        点「解析预览」确认结果后再创建。
+      </div>
+      <div class="btn-row" style="margin-bottom:10px">
+        <button class="btn" data-curl="parse" type="button">解析预览</button>
+      </div>
+      <textarea data-curl="text" placeholder="curl 'https://api.example.com/v1/users' -H 'Accept: application/json' ..." style="min-height:200px"></textarea>
+      <div data-curl="preview" style="margin-top:12px"></div>`,
+    footerHtml: `
+      <button class="btn" data-modal-close>取消</button>
+      <button class="btn primary" data-curl="confirm" type="button" disabled>创建请求</button>`,
+    onMount(root, close) {
+      const ta = root.querySelector('[data-curl="text"]');
+      const preview = root.querySelector('[data-curl="preview"]');
+      const confirmBtn = root.querySelector('[data-curl="confirm"]');
+      let parsed = null;
+
+      root.querySelector('[data-curl="parse"]').onclick = () => {
+        preview.innerHTML = '';
+        confirmBtn.disabled = true;
+        parsed = null;
+        try {
+          const text = ta.value.trim();
+          if (!text) throw new Error('请先粘贴 cURL 内容');
+          if (!/^curl\b/i.test(text) && !/\bcurl\s+-/i.test(text)) {
+            throw new Error('未检测到 curl 命令，请确认粘贴的是完整的 cURL');
+          }
+          const req = parseCurl(text);
+          if (!req.url) throw new Error('未能从 cURL 中解析出 URL');
+          parsed = req;
+          preview.innerHTML = `
+            <div class="card" style="margin:0">
+              <div style="font-size:13px;margin-bottom:8px">已识别为请求</div>
+              <div style="display:flex;gap:8px;align-items:center;padding:2px 0">
+                <span class="method-tag" style="color:${methodColor(req.method)}">${escapeHtml(req.method)}</span>
+                <span class="mono" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(req.url)}</span>
+              </div>
+              <div class="field-hint" style="margin-top:8px">
+                ${req.headers.length} 个请求头 · ${req.params.length} 个查询参数 ·
+                请求体：${escapeHtml(BODY_MODE_LABEL[req.body.mode] || req.body.mode)}
+              </div>
+            </div>`;
+          confirmBtn.disabled = false;
+        } catch (e) {
+          preview.innerHTML = `<div class="error-box" style="margin:0"><div class="err-title">✕ 解析失败</div><div class="err-msg">${escapeHtml(e.message)}</div></div>`;
+        }
+      };
+
+      confirmBtn.onclick = () => {
+        if (!parsed) return;
+        const patch = { ...parsed, name: curlRequestName(parsed.url) };
+        const req = createRequest(collectionId, patch);
+        state.sidebarTab = 'collections';
+        qsa('.stab').forEach((b) => b.classList.toggle('active', b.dataset.tab === 'collections'));
+        renderSidebar();
+        openTab({ type: 'request', refId: req.id });
+        bus.emit('action', { action: 'focus-url', requestId: req.id });
+        close();
+      };
+    },
+  });
+}
+
 function applyImport(result) {
   const ws = state.workspace;
   const ts = Date.now();
@@ -820,12 +928,11 @@ async function boot() {
     });
   });
 
-  qs('#btn-new-request').onclick = () => {
-    const req = stateMod.createRequest(null);
-    state.sidebarTab = 'collections';
-    qsa('.stab').forEach((b) => b.classList.toggle('active', b.dataset.tab === 'collections'));
-    renderSidebar();
-    openTab({ type: 'request', refId: req.id });
+  qs('#btn-new-request').onclick = (e) => {
+    showContextMenu(e, [
+      { label: '新建请求', icon: '＋', shortcut: 'Ctrl+N', action: () => startNewRequest(null) },
+      { label: '从 cURL 新建请求…', icon: '⧉', action: () => showCurlRequestDialog(null) },
+    ]);
   };
   qs('#btn-new-folder').onclick = () => {
     stateMod.createCollection(null);
@@ -968,6 +1075,9 @@ async function boot() {
     switch (payload.action) {
       case 'import':
         showImportDialog();
+        break;
+      case 'new-request-curl':
+        showCurlRequestDialog(payload.collectionId || null);
         break;
       case 'export':
         showExportDialog();

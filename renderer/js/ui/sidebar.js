@@ -300,6 +300,7 @@ function performDrop(payload, targetEl) {
 function blankMenu(e) {
   showContextMenu(e, [
     { label: '新建请求', icon: '＋', shortcut: 'Ctrl+N', action: () => quickNewRequest(null) },
+    { label: '从 cURL 新建请求…', icon: '⧉', action: () => bus.emit('action', { action: 'new-request-curl', collectionId: null }) },
     { label: '新建文件夹', icon: '📁', action: () => { createCollection(null); } },
     { separator: true },
     { label: '导入配置…', icon: '⭳', shortcut: 'Ctrl+I', action: () => bus.emit('action', { action: 'import' }) },
@@ -309,6 +310,7 @@ function blankMenu(e) {
 function folderMenu(e, col) {
   showContextMenu(e, [
     { label: '新建请求', icon: '＋', action: () => quickNewRequest(col.id) },
+    { label: '从 cURL 新建请求…', icon: '⧉', action: () => bus.emit('action', { action: 'new-request-curl', collectionId: col.id }) },
     { label: '新建子文件夹', icon: '📁', action: () => { createCollection(col.id); state.expanded.add(col.id); renderSidebar(); } },
     { separator: true },
     {
