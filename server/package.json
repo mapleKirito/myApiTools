@@ -1,6 +1,6 @@
 {
   "name": "my-api-tools-sync-server",
-  "version": "1.0.0-dev",
+  "version": "1.0.0",
   "private": true,
   "description": "MyApiTools 配置同步服务（仅存储与同步请求配置，不参与任何接口调用）",
   "type": "commonjs",
