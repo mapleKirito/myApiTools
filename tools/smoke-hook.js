@@ -328,8 +328,13 @@ const PROBE = `(async () => {
   out.demoEnvLabel = (document.querySelector('#env-picker-label') || {}).textContent || '';
   out.demoVariables = (document.querySelector('#env-picker') || {}).title || '';
 
-  /* ---------- 2. 新建请求 ---------- */
+  /* ---------- 2. 新建请求（＋按钮先弹下拉菜单，再点「新建请求」） ---------- */
   document.querySelector('#btn-new-request').click();
+  await sleep(300);
+  const newReqItem = [...document.querySelectorAll('#context-menu .menu-item')]
+    .find((i) => i.textContent.includes('新建请求') && !i.textContent.includes('cURL'));
+  out.newReqMenuFound = !!newReqItem;
+  if (newReqItem) newReqItem.click();
   await sleep(500);
   const pane = document.querySelector('#panes .pane.active');
   out.paneCreated = !!pane;
@@ -444,6 +449,33 @@ const PROBE = `(async () => {
   await sleep(500);
   out.runnerRendered = !!document.querySelector('.runner');
   out.runnerHasStartBtn = !!document.querySelector('[data-runner="start"]');
+
+  /* ---------- 9. 项目隔离：顶栏入口 / 弹窗切换 / 新建项目 ---------- */
+  out.projectLabel = (document.querySelector('#project-picker-label') || {}).textContent || '';
+  document.querySelector('#project-picker').click();
+  await sleep(400);
+  out.projectDialogShown = !!document.querySelector('#modal-root .project-list');
+  out.projectDialogHasDefault = !![...document.querySelectorAll('#modal-root .project-item')]
+    .find((i) => i.textContent.includes('默认项目'));
+  // 弹窗底部新建项目 → 创建后立即切换，侧栏应为空
+  const projNameInput = document.querySelector('#modal-root [data-project-name]');
+  if (projNameInput) {
+    projNameInput.value = '冒烟项目';
+    const createBtn = document.querySelector('#modal-root [data-project-create]');
+    if (createBtn) createBtn.click();
+    await sleep(500);
+  }
+  out.projectLabelAfterCreate = (document.querySelector('#project-picker-label') || {}).textContent || '';
+  out.newProjectEmpty = document.querySelectorAll('#sidebar-body .tree-row[data-req]').length === 0;
+  // 切回默认项目：重开弹窗，点「默认项目」那一行，数据必须原样回来
+  document.querySelector('#project-picker').click();
+  await sleep(400);
+  const defaultProjItem = [...document.querySelectorAll('#modal-root .project-item')]
+    .find((i) => i.textContent.includes('默认项目'));
+  if (defaultProjItem) { defaultProjItem.click(); await sleep(500); }
+  out.projectLabelAfterBack = (document.querySelector('#project-picker-label') || {}).textContent || '';
+  out.dataRestoredAfterSwitchBack = document.querySelectorAll('#sidebar-body .tree-row[data-req]').length >= 5;
+  out.welcomeAfterSwitchBack = !!document.querySelector('#panes .empty-state');
 
   out.errorCount = errs.length;
   out.errors = errs.slice(0, 10);
@@ -849,6 +881,10 @@ const PROBE_KEEP = `(async () => {
   switchTab('collections');
   await sleep(200);
   document.querySelector('#btn-new-request').click();
+  await sleep(300);
+  const newReqItem = [...document.querySelectorAll('#context-menu .menu-item')]
+    .find((i) => i.textContent.includes('新建请求') && !i.textContent.includes('cURL'));
+  if (newReqItem) newReqItem.click();
   await sleep(500);
   out.requestsInLocal = document.querySelectorAll('#sidebar-body .tree-row[data-req]').length;
 
@@ -1196,6 +1232,12 @@ function attach(win, app, smokeDir) {
         ['设置内容挂在内层容器上', base.settingsInnerHoldsContent],
         ['批量执行页渲染', base.runnerRendered],
         ['批量执行有开始按钮', base.runnerHasStartBtn],
+        ['＋请求按钮先弹下拉菜单', base.newReqMenuFound === true],
+        ['顶栏显示当前项目名称', base.projectLabel === '默认项目'],
+        ['项目弹窗列出已有项目', base.projectDialogShown && base.projectDialogHasDefault],
+        ['新建项目后自动切换且数据为空', base.projectLabelAfterCreate === '冒烟项目' && base.newProjectEmpty],
+        ['切回默认项目后数据恢复', base.projectLabelAfterBack === '默认项目' && base.dataRestoredAfterSwitchBack],
+        ['项目切换后回到欢迎页', base.welcomeAfterSwitchBack],
         ['[hidden] 兜底规则生效（能压过 .modal-root 的 display:grid）', base.hiddenRuleDisplay === 'none'],
         ['页面上带 hidden 的元素确实都不可见', base.allHiddenCollapsed],
         ['阶段 1 渲染进程无未捕获异常', base.errorCount === 0],
