@@ -135,6 +135,7 @@ function buildMenu() {
         { label: '新建请求', accelerator: 'CmdOrCtrl+N', click: () => send('menu', { action: 'new-request' }) },
         { label: '从 cURL 新建请求…', click: () => send('menu', { action: 'new-request-curl' }) },
         { label: '新建文件夹', accelerator: 'CmdOrCtrl+Shift+N', click: () => send('menu', { action: 'new-folder' }) },
+        { label: '切换项目…', click: () => send('menu', { action: 'switch-project' }) },
         { type: 'separator' },
         { label: '导入配置…', accelerator: 'CmdOrCtrl+I', click: () => send('menu', { action: 'import' }) },
         { label: '导出配置…', accelerator: 'CmdOrCtrl+E', click: () => send('menu', { action: 'export' }) },

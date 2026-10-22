@@ -116,6 +116,55 @@ input, textarea { user-select: text; }
 .env-picker .caret { color: var(--text-3); font-size: 10px; }
 #env-picker-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* ---------- 项目切换 ---------- */
+.project-picker { max-width: 200px; }
+.project-picker .proj-dot {
+  width: 7px; height: 7px; border-radius: 2px;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+#project-picker-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.project-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 14px; }
+.project-item {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; padding: 8px 10px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  text-align: left;
+  color: var(--text-2);
+  transition: background .12s, border-color .12s;
+}
+.project-item:hover { background: var(--bg-hover); color: var(--text); border-color: var(--border-strong); }
+.project-item.active { background: var(--accent-soft); border-color: var(--accent-line); color: var(--text); }
+.project-item-icon { flex-shrink: 0; width: 12px; text-align: center; font-size: 10px; color: var(--text-3); }
+.project-item.active .project-item-icon { color: var(--accent); }
+.project-item-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.project-item-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-item-meta { font-size: 11px; color: var(--text-3); }
+.project-item-badge {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  font-size: 10px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+  color: var(--accent);
+}
+.project-create { display: flex; gap: 8px; align-items: center; }
+.project-create input { flex: 1; min-width: 0; }
+.project-empty {
+  padding: 18px;
+  text-align: center;
+  color: var(--text-3);
+  font-size: 12px;
+  background: var(--bg-2);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+}
+
 .topbar-search { position: relative; flex: 1; max-width: 420px; }
 #global-search {
   width: 100%; height: 28px;

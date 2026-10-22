@@ -20,6 +20,10 @@ import {
   setActiveEnv,
   commit,
   createRequest,
+  projectsList,
+  activeProject,
+  switchProject,
+  createProject,
 } from './state.js';
 import { escapeHtml, methodColor, methodColor as mc, formatRelative, clone, uid } from './helpers.js';
 import { sendFromTab, renderRequestPane, renderRequestSubtabs, renderRequestBody, initRequestEvents } from './ui/requestView.js';
@@ -282,6 +286,16 @@ function seedDemo() {
  * 顶栏
  * ==================================================================== */
 function refreshTopbar() {
+  const project = activeProject();
+  const projectBtn = qs('#project-picker');
+  const projectLabel = qs('#project-picker-label');
+  if (projectBtn && projectLabel) {
+    projectLabel.textContent = project ? project.name : '未命名项目';
+    projectBtn.title = project
+      ? `当前项目：${project.name}（${project.requests.filter((r) => !r.deleted).length} 个请求 · 点击切换）`
+      : '点击选择项目';
+  }
+
   const env = environments().find((e) => e.id === state.workspace.settings.activeEnvId);
   const btn = qs('#env-picker');
   const label = qs('#env-picker-label');
@@ -336,6 +350,77 @@ function refreshTopbar() {
         : `设置（发现新版本 v${updateState.latest ? updateState.latest.version : ''}）`;
     }
   }
+}
+
+/* ---------- 选择项目 ---------- */
+function showProjectDialog() {
+  const current = activeProject();
+  const list = projectsList();
+  const rows = list.map((p) => {
+    const reqCount = (p.requests || []).filter((r) => !r.deleted).length;
+    const envCount = (p.environments || []).filter((e) => !e.deleted).length;
+    const isActive = current && p.id === current.id;
+    return `
+      <button class="project-item ${isActive ? 'active' : ''}" data-project-id="${escapeHtml(p.id)}" type="button">
+        <span class="project-item-icon">${isActive ? '●' : '○'}</span>
+        <span class="project-item-main">
+          <span class="project-item-name">${escapeHtml(p.name)}</span>
+          <span class="project-item-meta">${reqCount} 个请求 · ${envCount} 个环境${isActive ? ' · 当前项目' : ''}</span>
+        </span>
+        ${isActive ? '<span class="project-item-badge">当前</span>' : ''}
+      </button>`;
+  }).join('');
+
+  openModal({
+    title: '选择项目',
+    wide: true,
+    bodyHtml: `
+      <div class="field-hint" style="margin-bottom:12px">
+        每个项目独立保存自己的集合、请求、环境变量与本地令牌，互不影响。
+      </div>
+      <div class="project-list">${rows || '<div class="project-empty">还没有项目，先在下方创建一个</div>'}</div>
+      <div class="project-create">
+        <input type="text" data-project-name maxlength="60" placeholder="新项目名称，例如：生产环境网关" />
+        <button class="btn primary" data-project-create type="button">创建并切换</button>
+      </div>
+      <div class="field-hint" style="margin-top:8px">创建后会立即切换到新项目，原项目的数据完整保留。</div>`,
+    footerHtml: '<button class="btn" data-modal-close>关闭</button>',
+    onMount(root, close) {
+      const input = root.querySelector('[data-project-name]');
+      const createBtn = root.querySelector('[data-project-create]');
+      const doCreate = () => {
+        const name = input.value.trim();
+        if (!name) {
+          input.focus();
+          toastWarn('请先填写项目名称');
+          return;
+        }
+        const project = createProject(name);
+        close();
+        toastOk(`已创建并切换到「${project.name}」`, '项目');
+      };
+      createBtn.onclick = doCreate;
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          doCreate();
+        }
+      });
+      root.querySelectorAll('[data-project-id]').forEach((el) => {
+        el.onclick = () => {
+          const id = el.dataset.projectId;
+          if (id === state.workspace.activeProjectId) {
+            close();
+            return;
+          }
+          const target = switchProject(id);
+          close();
+          if (target) toastOk(`已切换到项目「${target.name}」`, '项目');
+        };
+      });
+      setTimeout(() => input && input.focus(), 30);
+    },
+  });
 }
 
 function showEnvMenu(e) {
@@ -962,6 +1047,7 @@ async function boot() {
       { label: '全量下载（覆盖本机）', icon: '↓', action: () => syncNow('pull', { forcePull: true }) },
     ]);
   };
+  qs('#project-picker').onclick = () => showProjectDialog();
   qs('#env-picker').onclick = (e) => showEnvMenu(e);
   qs('#status-env').onclick = (e) => showEnvMenu(e);
   qs('#status-sync').onclick = () => {
@@ -1081,6 +1167,9 @@ async function boot() {
         break;
       case 'export':
         showExportDialog();
+        break;
+      case 'switch-project':
+        showProjectDialog();
         break;
       case 'sync-now':
         syncNow('both');

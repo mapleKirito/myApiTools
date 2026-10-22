@@ -325,7 +325,7 @@ async function runSync(mode, { silent, forcePull }) {
           );
         }
         if (conflicts.length) changed += conflicts.length;
-        clearDirty(entities.map((e) => `${e.kind}:${e.id}`));
+        clearDirty(entities.map((e) => e._key).filter(Boolean));
       }
     }
 
