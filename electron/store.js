@@ -95,6 +95,10 @@ function createProjectRecord(id, name) {
     globalsUpdatedAt: 0,
     history: [],
     activeEnvId: null,
+    // 项目级服务注册，跨环境共享
+    serviceUrls: [
+      { id: 'svc_default', name: '默认', url: '', isDefault: true },
+    ],
   };
 }
 

@@ -109,14 +109,6 @@ export function renderEnvContent(tab) {
         <button class="btn danger" data-env-delete type="button">删除</button>
       </div>
       <div class="env-detail-body">
-        <div class="env-baseurl-row">
-          <label class="field-label" style="margin-bottom:4px">接口地址前缀</label>
-          <input type="text" data-env-baseurl value="${escapeHtml(env.baseUrl || '')}"
-            placeholder="https://demo.com/api  （可引用 {{变量}}）" spellcheck="false" />
-          <div class="field-hint" style="margin-top:3px">
-            请求地址以 <span class="mono">/</span> 开头时自动拼接；写完整 URL 则直接使用
-          </div>
-        </div>
         ${varTable('env', env.variables || [])}
       </div>`;
   }
@@ -207,14 +199,6 @@ export function initEnvEvents(root) {
     if (state.envPanelId === GLOBALS_ID) return;
     updateEnvironment(state.envPanelId, { name: el.value }, { silent: true });
   });
-
-  on(root, 'input', '[data-env-baseurl]', (_e, el) => {
-    if (state.envPanelId === GLOBALS_ID) return;
-    updateEnvironment(state.envPanelId, { baseUrl: el.value.trim() }, { silent: true });
-  });
-  on(root, 'blur', '[data-env-baseurl]', () => {
-    bus.emit('env-change');
-  }, true);
 
   on(root, 'blur', '[data-env-name]', (_e, el) => {
     bus.emit('env-change');

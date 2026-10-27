@@ -162,8 +162,24 @@ input, textarea { user-select: text; }
   font-size: 12px;
   background: var(--bg-2);
   border: 1px dashed var(--border);
-  border-radius: var(--radius);
 }
+
+/* ---------- 服务管理 ---------- */
+.service-list { display: flex; flex-direction: column; gap: 6px; max-height: 360px; overflow: auto; }
+.service-row {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--bg-2); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 6px 8px;
+}
+.service-row .service-row-default { width: 20px; text-align: center; color: var(--warn); font-size: 14px; }
+.service-row input[type="text"] {
+  flex: 1; min-width: 0; height: 28px; padding: 0 8px;
+  background: var(--bg-1); border: 1px solid var(--border);
+  border-radius: var(--radius); font-size: 12px; outline: none;
+}
+.service-row input[type="text"]:focus { border-color: var(--accent-line); }
+.service-row input[data-svc-name] { max-width: 120px; }
+.service-row-isdefault { display: flex; align-items: center; gap: 2px; font-size: 11px; color: var(--text-2); white-space: nowrap; user-select: none; }
 
 .topbar-search { position: relative; flex: 1; max-width: 420px; }
 #global-search {
@@ -422,6 +438,20 @@ input, textarea { user-select: text; }
   width: 104px;
 }
 .method-select:focus { border-color: var(--accent-line); }
+
+.service-select {
+  height: 34px; padding: 0 8px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 11px;
+  cursor: pointer;
+  outline: none;
+  flex-shrink: 0;
+  max-width: 200px;
+  color: var(--text-2);
+}
+.service-select:focus { border-color: var(--accent-line); color: var(--text); }
 
 .url-input {
   flex: 1; min-width: 0;

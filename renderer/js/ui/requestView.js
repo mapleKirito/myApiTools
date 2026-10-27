@@ -10,11 +10,12 @@ import {
   updateRequest,
   commit,
   openTab,
+  activeProject,
 } from '../state.js';
 import { escapeHtml, methodColor, METHODS, METHOD_COLORS } from '../helpers.js';
 import { renderResponse, resetResponse, getViewState } from './responseView.js';
 import { sendOne } from '../runner.js';
-import { previewUrl, availableVariables } from '../vars.js';
+import { previewUrl, compileRequest, resolveServiceUrl, availableVariables } from '../vars.js';
 import { toastErr, showContextMenu } from './feedback.js';
 import { toCurl } from '../importers.js';
 
@@ -29,13 +30,21 @@ export function renderRequestPane(tab) {
     return `<div class="empty-state"><div><div class="big">请求已被删除</div></div></div>`;
   }
   const vs = getViewState(tab.id);
+  const proj = activeProject();
+  const services = (proj && proj.serviceUrls) || [];
+  const currentSvc = resolveServiceUrl(req);
+  const serviceOptions = [
+    `<option value="" ${!req.serviceUrlId ? 'selected' : ''}>${req.serviceUrlId ? '—' : '继承'}（${currentSvc ? escapeHtml(currentSvc.name) : '无'}）</option>`,
+    ...services.map((s) => `<option value="${escapeHtml(s.id)}" ${req.serviceUrlId === s.id ? 'selected' : ''}>${escapeHtml(s.name)}${s.isDefault ? ' · 默认' : ''}</option>`),
+  ].join('');
   return html`
     <div class="request-top">
       <input class="req-name" data-role="req-name" value="${req.name}" placeholder="请求名称" spellcheck="false" title="请求名称" />
       <select class="method-select" data-role="method" style="color:${raw(methodColor(req.method))}">
         ${raw(METHODS.map((m) => `<option value="${m}" ${m === req.method ? 'selected' : ''}>${m}</option>`).join(''))}
       </select>
-      <input class="url-input" data-role="url" value="${req.url}" placeholder="https://api.example.com/users 或 {{host}}/users" spellcheck="false" />
+      <select class="service-select" data-role="service-url" title="服务地址">${raw(serviceOptions)}</select>
+      <input class="url-input" data-role="url" value="${req.url}" placeholder="https://api.example.com/users 或 /users（相对路径）" spellcheck="false" />
       <button class="send-btn" data-role="send" type="button"><span data-role="send-label">发送</span></button>
     </div>
     <div class="url-preview"><span class="preview-url" data-role="url-preview"></span><span class="unresolved-badge" data-role="unresolved"></span></div>
@@ -522,6 +531,14 @@ export function initRequestEvents(delegator) {
     if (!tab) return;
     updateRequest(tab.refId, { method: el.value });
     el.style.color = methodColor(el.value);
+  });
+
+  on(root, 'change', '[data-role="service-url"]', (_e, el) => {
+    const tab = tabOf(el);
+    if (!tab) return;
+    updateRequest(tab.refId, { serviceUrlId: el.value || null });
+    bus.emit('change');
+    updateUrlPreview(tab.id);
   });
 
   on(root, 'click', '[data-role="send"]', (_e, el) => {

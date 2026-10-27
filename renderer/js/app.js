@@ -360,12 +360,13 @@ function showProjectDialog() {
     const reqCount = (p.requests || []).filter((r) => !r.deleted).length;
     const envCount = (p.environments || []).filter((e) => !e.deleted).length;
     const isActive = current && p.id === current.id;
+    const svcCount = (p.serviceUrls || []).length;
     return `
       <button class="project-item ${isActive ? 'active' : ''}" data-project-id="${escapeHtml(p.id)}" type="button">
         <span class="project-item-icon">${isActive ? '●' : '○'}</span>
         <span class="project-item-main">
           <span class="project-item-name">${escapeHtml(p.name)}</span>
-          <span class="project-item-meta">${reqCount} 个请求 · ${envCount} 个环境${isActive ? ' · 当前项目' : ''}</span>
+          <span class="project-item-meta">${reqCount} 请求 · ${envCount} 环境 · ${svcCount} 服务${isActive ? ' · 当前项目' : ''}</span>
         </span>
         ${isActive ? '<span class="project-item-badge">当前</span>' : ''}
       </button>`;
@@ -382,12 +383,13 @@ function showProjectDialog() {
       <div class="project-create">
         <input type="text" data-project-name maxlength="60" placeholder="新项目名称，例如：生产环境网关" />
         <button class="btn primary" data-project-create type="button">创建并切换</button>
-      </div>
-      <div class="field-hint" style="margin-top:8px">创建后会立即切换到新项目，原项目的数据完整保留。</div>`,
+        <button class="btn ghost" data-project-services type="button">管理服务…</button>
+      </div>`,
     footerHtml: '<button class="btn" data-modal-close>关闭</button>',
     onMount(root, close) {
       const input = root.querySelector('[data-project-name]');
       const createBtn = root.querySelector('[data-project-create]');
+      const servicesBtn = root.querySelector('[data-project-services]');
       const doCreate = () => {
         const name = input.value.trim();
         if (!name) {
@@ -406,11 +408,13 @@ function showProjectDialog() {
           doCreate();
         }
       });
+      servicesBtn.onclick = () => { close(); showServicesDialog(); };
       root.querySelectorAll('[data-project-id]').forEach((el) => {
         el.onclick = () => {
           const id = el.dataset.projectId;
           if (id === state.workspace.activeProjectId) {
             close();
+            showServicesDialog();
             return;
           }
           const target = switchProject(id);
@@ -419,6 +423,115 @@ function showProjectDialog() {
         };
       });
       setTimeout(() => input && input.focus(), 30);
+    },
+  });
+}
+
+/* ---------- 管理项目服务 ---------- */
+function showServicesDialog() {
+  const project = activeProject();
+  if (!project) { toastWarn('没有激活的项目'); return; }
+
+  const render = () => {
+    const rows = (project.serviceUrls || []).map((s) => {
+      const idAttr = `data-svc="${escapeHtml(s.id)}"`;
+      return `
+        <div class="service-row" ${idAttr}>
+          <span class="service-row-default">${s.isDefault ? '★' : ''}</span>
+          <input type="text" data-svc-name value="${escapeHtml(s.name)}" placeholder="服务名" />
+          <input type="text" data-svc-url value="${escapeHtml(s.url)}" placeholder="https://demo.com/api  {{host}}/api" spellcheck="false" />
+          <label class="service-row-isdefault"><input type="checkbox" data-svc-default ${s.isDefault ? 'checked' : ''} />默认</label>
+          <button class="row-icon-btn" data-svc-del title="删除" type="button">✕</button>
+        </div>`;
+    }).join('');
+    return rows || '<div class="project-empty">还没有服务，点下方「新增服务」添加</div>';
+  };
+
+  openModal({
+    title: `管理服务 · ${project.name}`,
+    wide: true,
+    bodyHtml: `
+      <div class="field-hint" style="margin-bottom:10px">
+        请求地址以 <span class="mono">/</span> 开头时自动拼接所选服务的 URL。可引用 {{变量}}，值从当前环境取。
+      </div>
+      <div class="service-list" data-service-list>${render()}</div>`,
+    footerHtml: '<button class="btn" data-svc-add type="button">＋ 新增服务</button><span class="spacer"></span><button class="btn primary" data-svc-save type="button">保存</button>',
+    onMount(root, close) {
+      const list = root.querySelector('[data-service-list]');
+
+      const collectRow = (rowEl) => {
+        const id = rowEl.dataset.svc || 'svc_' + uid('svc');
+        const nameEl = rowEl.querySelector('[data-svc-name]');
+        const urlEl = rowEl.querySelector('[data-svc-url]');
+        const defEl = rowEl.querySelector('[data-svc-default]');
+        return {
+          id,
+          name: String(nameEl.value || '服务').trim() || '服务',
+          url: String(urlEl.value || '').trim(),
+          isDefault: !!defEl.checked,
+        };
+      };
+
+      root.querySelector('[data-svc-add]').onclick = () => {
+        const isEmpty = (project.serviceUrls || []).length === 0;
+        const next = {
+          id: 'svc_' + uid('svc'),
+          name: '',
+          url: '',
+          isDefault: isEmpty,
+        };
+        project.serviceUrls = [...(project.serviceUrls || []), next];
+        list.innerHTML = render();
+        // 聚焦新行的名称输入框
+        const fresh = list.querySelector(`[data-svc="${next.id}"] [data-svc-name]`);
+        if (fresh) fresh.focus();
+      };
+
+      root.addEventListener('input', (e) => {
+        const row = e.target.closest('.service-row');
+        if (!row) return;
+        // 当某个行勾选「默认」，自动把其他行的取消
+        if (e.target.matches('[data-svc-default]') && e.target.checked) {
+          list.querySelectorAll('[data-svc-default]').forEach((cb) => { if (cb !== e.target) cb.checked = false; });
+        }
+      });
+
+      root.addEventListener('click', (e) => {
+        const del = e.target.closest('[data-svc-del]');
+        if (!del) return;
+        const row = del.closest('.service-row');
+        const id = row.dataset.svc;
+        const current = project.serviceUrls || [];
+        if (current.length <= 1) { toastWarn('至少保留一条服务'); return; }
+        project.serviceUrls = current.filter((s) => s.id !== id);
+        const removedWasDefault = current.find((s) => s.id === id)?.isDefault;
+        if (removedWasDefault && project.serviceUrls.length) {
+          project.serviceUrls[0].isDefault = true;
+        }
+        list.innerHTML = render();
+      });
+
+      root.querySelector('[data-svc-save]').onclick = () => {
+        const rows = [...list.querySelectorAll('.service-row')];
+        let svcs = rows.map(collectRow);
+        // 保证至少一个默认
+        if (svcs.length && !svcs.some((s) => s.isDefault)) svcs[0].isDefault = true;
+        // 每个 id 唯一（防重名）
+        const seen = new Set();
+        svcs = svcs.filter((s) => {
+          if (seen.has(s.id)) s.id = 'svc_' + uid('svc');
+          seen.add(s.id);
+          return true;
+        });
+        project.serviceUrls = svcs;
+        project.updatedAt = Date.now();
+        state.dirtyProjects.add(project.id);
+        commit({ kind: 'project', ids: [project.id] });
+        close();
+        toastOk('服务配置已保存');
+        bus.emit('change');
+        bus.emit('env-change');
+      };
     },
   });
 }

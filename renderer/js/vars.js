@@ -164,10 +164,50 @@ export function resolveDeep(input, map, depth = 0) {
 }
 
 /* ------------------------- 请求编译 ------------------------- */
+
+/**
+ * 沿 collection 父链解析服务 URL 继承。
+ * 优先级（从高到低）：
+ *   1. request.serviceUrlId（请求显式指定）
+ *   2. 沿 collection.parentId 上溯找首个有 serviceUrlId 的文件夹
+ *   3. project.serviceUrls 里 isDefault=true 的服务
+ *   4. 以上都没有 → 返回 null（不拼接）
+ */
+export function resolveServiceUrl(request) {
+  const project = (state.workspace && state.workspace.projects || []).find((p) => p.id === state.workspace.activeProjectId) || null;
+  if (!project) return null;
+
+  // 1. 请求自己指定
+  if (request && request.serviceUrlId) {
+    const svc = (project.serviceUrls || []).find((s) => s.id === request.serviceUrlId);
+    if (svc) return svc;
+  }
+
+  // 2. 沿父链上溯
+  if (request && request.collectionId) {
+    const cols = state.workspace.collections || [];
+    let col = cols.find((c) => c.id === request.collectionId);
+    const seen = new Set();
+    while (col && !seen.has(col.id)) {
+      seen.add(col.id);
+      if (col.serviceUrlId) {
+        const svc = (project.serviceUrls || []).find((s) => s.id === col.serviceUrlId);
+        if (svc) return svc;
+      }
+      if (!col.parentId) break;
+      col = cols.find((c) => c.id === col.parentId);
+    }
+  }
+
+  // 3. 项目默认服务
+  const def = (project.serviceUrls || []).find((s) => s.isDefault);
+  return def || null;
+}
+
 /**
  * 把一个配置态的 request 编译成可直接交给主进程执行的描述对象
  * @param {object} request 集合中的请求配置
- * @returns {{descriptor:object, unresolved:string[], resolvedUrl:string, preview:object}}
+ * @returns {{descriptor:object, unresolved:string[], resolvedUrl:string, preview:object, serviceUsed:{name,url}}}
  */
 export function compileRequest(request) {
   if (!request) throw new Error('请求不存在');
@@ -177,9 +217,8 @@ export function compileRequest(request) {
   const collect = (r) => unresolved.push(...r.unresolved);
 
   // ---- URL + 查询参数 ----
-  // baseUrl 也走变量替换，支持 {{host}}/api 这种写法
-  const env = getActiveEnv();
-  const baseRes = env ? resolveString(env.baseUrl || '', map) : { value: '', unresolved: [] };
+  const svc = resolveServiceUrl(request);
+  const baseRes = svc ? resolveString(svc.url || '', map) : { value: '', unresolved: [] };
   collect(baseRes);
   let baseUrl = baseRes.value.trim();
 
@@ -300,6 +339,7 @@ export function compileRequest(request) {
     unresolved: dedupe(unresolved),
     resolvedUrl: url.toString(),
     preview: { url: url.toString(), headers: Object.fromEntries(headers), body },
+    serviceUsed: svc ? { id: svc.id, name: svc.name, url: svc.url } : null,
   };
 }
 

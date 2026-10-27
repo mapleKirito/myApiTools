@@ -25,6 +25,8 @@ import {
   clearHistory,
   getRequest,
   getCollection,
+  activeProject,
+  commit,
 } from '../state.js';
 import {
   methodColor,
@@ -308,10 +310,35 @@ function blankMenu(e) {
 }
 
 function folderMenu(e, col) {
+  const proj = activeProject();
+  const svcs = proj ? (proj.serviceUrls || []) : [];
+  const svcItems = [];
+  svcItems.push({ label: '服务地址', header: true });
+  svcItems.push({
+    label: '继承（沿用父级/默认）',
+    icon: col.serviceUrlId ? '' : '●',
+    action: () => {
+      updateCollection(col.id, { serviceUrlId: null });
+      bus.emit('change');
+    },
+  });
+  for (const s of svcs) {
+    svcItems.push({
+      label: `${s.name}${s.isDefault ? ' · 默认' : ''}`,
+      icon: col.serviceUrlId === s.id ? '●' : '',
+      action: () => {
+        updateCollection(col.id, { serviceUrlId: s.id });
+        bus.emit('change');
+      },
+    });
+  }
+
   showContextMenu(e, [
     { label: '新建请求', icon: '＋', action: () => quickNewRequest(col.id) },
     { label: '从 cURL 新建请求…', icon: '⧉', action: () => bus.emit('action', { action: 'new-request-curl', collectionId: col.id }) },
     { label: '新建子文件夹', icon: '📁', action: () => { createCollection(col.id); state.expanded.add(col.id); renderSidebar(); } },
+    { separator: true },
+    ...svcItems,
     { separator: true },
     {
       label: '批量执行此文件夹',

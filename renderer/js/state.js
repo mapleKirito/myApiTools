@@ -145,6 +145,21 @@ function defaultDeviceName() {
 /* ----------------------------- 项目 ----------------------------- */
 const PROJECT_DATA_KEYS = ['collections', 'requests', 'environments', 'globals', 'history'];
 
+/** 项目级服务注册：跨环境共享名称，但 URL 支持 {{变量}}（值从激活环境取） */
+function normalizeService(row, idx = 0, oldBaseUrl = '') {
+  if (!row || typeof row !== 'object') {
+    // 旧数据兜底：没有 serviceUrls 时，用迁移过来的 baseUrl 造一条默认服务
+    const url = String(oldBaseUrl || '').trim();
+    return { id: 'svc_default', name: '默认', url, isDefault: true };
+  }
+  return {
+    id: String(row.id || ('svc_' + (idx === 0 ? 'default' : uid('svc')))),
+    name: String(row.name || '服务').trim(),
+    url: String(row.url || '').trim(),
+    isDefault: !!row.isDefault,
+  };
+}
+
 function normalizeProject(p) {
   if (!p || typeof p !== 'object') return null;
   const now = Date.now();
@@ -158,6 +173,21 @@ function normalizeProject(p) {
     activeEnvId: p.activeEnvId || null,
   };
   for (const key of PROJECT_DATA_KEYS) out[key] = Array.isArray(p[key]) ? p[key] : [];
+
+  // serviceUrls：先取显式提供的；没有就从 environments[0].baseUrl 迁移（dev.2 遗留）
+  const hasExplicit = Array.isArray(p.serviceUrls) && p.serviceUrls.length;
+  if (hasExplicit) {
+    out.serviceUrls = p.serviceUrls.map((s, i) => normalizeService(s, i));
+    if (!out.serviceUrls.some((s) => s.isDefault) && out.serviceUrls.length) out.serviceUrls[0].isDefault = true;
+  } else {
+    const migratedBaseUrl = (out.environments.find((e) => e.baseUrl) && out.environments.find((e) => e.baseUrl).baseUrl) || '';
+    out.serviceUrls = [normalizeService(null, 0, migratedBaseUrl)];
+  }
+
+  // 旧 collection / request 没有 serviceUrlId 时默认为 null（继承）
+  out.collections = out.collections.map((c) => ({ ...c, serviceUrlId: c.serviceUrlId || null }));
+  out.requests = out.requests.map((r) => ({ ...r, serviceUrlId: r.serviceUrlId || null }));
+
   return out;
 }
 
