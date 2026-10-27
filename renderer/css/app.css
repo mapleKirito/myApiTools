@@ -548,6 +548,11 @@ input, textarea { user-select: text; }
 .subtab-body.no-pad { padding: 0; }
 
 /* ---------- 键值编辑器 ---------- */
+.section-title {
+  font-size: 11px; font-weight: 600;
+  color: var(--text-3); text-transform: uppercase; letter-spacing: .4px;
+  padding: 6px 10px 2px;
+}
 .kv-table { width: 100%; border-collapse: collapse; }
 .kv-table th {
   text-align: left; font-weight: 500; font-size: 11px;

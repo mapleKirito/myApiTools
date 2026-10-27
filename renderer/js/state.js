@@ -234,7 +234,7 @@ function normalizeProject(p) {
 
   // 旧 collection / request 没有 serviceUrlId 时默认为 null（继承）
   out.collections = out.collections.map((c) => ({ ...c, serviceUrlId: c.serviceUrlId || null }));
-  out.requests = out.requests.map((r) => ({ ...r, serviceUrlId: r.serviceUrlId || null }));
+  out.requests = out.requests.map((r) => normalizeRequestFields({ ...r, serviceUrlId: r.serviceUrlId || null }));
 
   return out;
 }
@@ -418,14 +418,15 @@ export function collections() {
   return state.workspace.collections.filter(alive);
 }
 export function requests() {
-  return state.workspace.requests.filter(alive);
+  return state.workspace.requests.filter(alive).map(normalizeRequestFields);
 }
 export function environments() {
   return state.workspace.environments.filter(alive);
 }
 
 export function getRequest(id) {
-  return state.workspace.requests.find((r) => r.id === id && alive(r)) || null;
+  const r = state.workspace.requests.find((x) => x.id === id && alive(x)) || null;
+  return r ? normalizeRequestFields(r) : null;
 }
 export function getCollection(id) {
   return state.workspace.collections.find((c) => c.id === id && alive(c)) || null;
@@ -492,14 +493,22 @@ export function createCollection(parentId = null, name = '新建文件夹') {
   return item;
 }
 
+/** 补齐请求对象的缺失字段（兼容旧数据 / 远端拉回的旧实体） */
+function normalizeRequestFields(req) {
+  if (!req || typeof req !== 'object') return req;
+  if (!Array.isArray(req.pathParams)) req.pathParams = [];
+  return req;
+}
+
 export function createRequest(collectionId = null, patch = {}) {
-  const item = {
+  const item = normalizeRequestFields({
     id: uid('req'),
     name: patch.name || '新建请求',
     collectionId: collectionId || null,
     sort: nextSort(collectionId),
     method: patch.method || 'GET',
     url: patch.url || '',
+    pathParams: patch.pathParams || [],
     params: patch.params || [],
     headers: patch.headers || [],
     body: patch.body || { mode: 'none', content: '', fields: [], contentType: '' },
@@ -509,7 +518,7 @@ export function createRequest(collectionId = null, patch = {}) {
     createdAt: Date.now(),
     updatedAt: Date.now(),
     deleted: false,
-  };
+  });
   state.workspace.requests.push(item);
   if (collectionId) state.expanded.add(collectionId);
   commit({ kind: 'request', ids: [item.id] });
@@ -934,9 +943,11 @@ export function applyRemoteEntity(ent, { force = false } = {}) {
   if (!listKey) return false;
   const list = project[listKey] || (project[listKey] = []);
   const idx = list.findIndex((x) => x.id === id);
+  const wrap = (ent.data || {});
+  const applyNorm = kind === 'request' ? normalizeRequestFields : (x) => x;
   if (idx < 0) {
     if (deleted) return false;
-    list.push({ ...(ent.data || {}), id, deleted: false, updatedAt });
+    list.push(applyNorm({ ...wrap, id, deleted: false, updatedAt }));
     if (kind === 'collection' && project.id === state.workspace.activeProjectId) state.expanded.add(id);
   } else if (!force && (list[idx].updatedAt || 0) >= updatedAt) {
     return false;
@@ -944,7 +955,7 @@ export function applyRemoteEntity(ent, { force = false } = {}) {
     list[idx].deleted = true;
     list[idx].updatedAt = updatedAt;
   } else {
-    list[idx] = { ...(ent.data || {}), id, deleted: false, updatedAt };
+    list[idx] = applyNorm({ ...wrap, id, deleted: false, updatedAt });
   }
   if (project.id !== state.workspace.activeProjectId) state.dirtyProjects.add(project.id);
   return true;

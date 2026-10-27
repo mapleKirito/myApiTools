@@ -95,7 +95,9 @@ export function renderRequestSubtabs(tab) {
   const host = qs(`.pane[data-tab="${tab.id}"] [data-role="req-subtabs"]`);
   if (!req || !host) return;
   const counts = {
-    params: (req.params || []).filter((p) => p.enabled !== false && p.key).length,
+    params:
+      (req.params || []).filter((p) => p.enabled !== false && p.key).length +
+      (req.pathParams || []).filter((p) => p.enabled !== false && p.key).length,
     headers: (req.headers || []).filter((h) => h.enabled !== false && h.key).length,
     body: req.body && req.body.mode && req.body.mode !== 'none' ? 1 : 0,
     auth: req.auth && req.auth.type && req.auth.type !== 'none' ? 1 : 0,
@@ -130,7 +132,16 @@ export function renderRequestBody(tab) {
 
   switch (vs.reqSubtab) {
     case 'params':
-      content = kvTable('params', req.params, '参数名', '参数值', req);
+      // 先根据当前 URL 同步 pathParams
+      const ppSync = syncPathParamsFromUrl(req.url || '', req.pathParams || []);
+      if (ppSync.changed) {
+        updateRequest(req.id, { pathParams: ppSync.next }, { silent: true });
+        req.pathParams = ppSync.next;
+      }
+      const pathParamsHtml = (req.pathParams || []).length
+        ? `<div style="margin:8px 0 4px"><div class="section-title">Path Parameters</div>${kvTable('path-params', req.pathParams, '参数名', '参数值', req)}</div>`
+        : '';
+      content = pathParamsHtml + kvTable('params', req.params, '参数名', '参数值', req);
       noPad = true;
       break;
     case 'headers':
@@ -162,8 +173,10 @@ function kvTable(kind, rows, keyPh, valPh, req) {
   const body = list
     .map((row, i) => kvRow(kind, row, i, keyPh, valPh))
     .join('');
-  // 末尾始终留一个空白行，输入即新增
-  const ghost = kvRow(kind, { key: '', value: '', enabled: true, isGhost: true }, list.length, keyPh, valPh);
+  // path-params 不允许手动新增（只能从 URL 提取），跳过 ghost row
+  const ghost = kind === 'path-params'
+    ? ''
+    : kvRow(kind, { key: '', value: '', enabled: true, isGhost: true }, list.length, keyPh, valPh);
   return `
     <table class="kv-table" data-kv="${kind}">
       <thead>
@@ -177,22 +190,72 @@ function kvTable(kind, rows, keyPh, valPh, req) {
       <tbody>${body}${ghost}</tbody>
     </table>
     <div class="field-hint" style="padding:8px 10px">
-      ${kind === 'params' ? '发送时会与 URL 中已有的查询参数合并' : '值支持 {{变量}} 占位符'}
+      ${kind === 'params' ? '发送时会与 URL 中已有的查询参数合并' : kind === 'path-params' ? '路径变量会替换 URL 中的 {param} 片段（键名由 URL 自动提取，不可手动修改）' : '值支持 {{变量}} 占位符'}
       ${req ? ` · 共 ${list.filter((r) => r.enabled !== false && r.key).length} 项生效` : ''}
     </div>`;
 }
 
+/**
+ * 从 URL 中提取 {xxx} 格式的路径参数名（只看 path 部分，不看 query/hash）
+ * 并与现有 pathParams 同步：新增缺失项、移除多余项、保留已有值
+ * @param {string} urlStr 原始 URL
+ * @param {Array} existing 已有的 pathParams
+ * @returns {{changed:boolean, next:Array}} changed 表示是否有变化需要写入
+ */
+function syncPathParamsFromUrl(urlStr, existing) {
+  const found = new Set();
+  if (urlStr) {
+    // 从纯 path 部分提取（去掉协议、域名、query、hash）
+    const pathOnly = urlStr.split('?')[0].split('#')[0];
+    for (const m of pathOnly.matchAll(/\{([^{}]+?)\}/g)) {
+      found.add(m[1].trim());
+    }
+  }
+  const current = existing || [];
+  const currentMap = new Map();
+  for (const pp of current) {
+    if (pp.key) currentMap.set(String(pp.key).trim(), pp);
+  }
+  const next = [];
+  let changed = false;
+
+  // 保留 URL 里仍存在的，按 URL 中出现顺序排列
+  for (const name of found) {
+    if (currentMap.has(name)) {
+      next.push(currentMap.get(name));
+    } else {
+      next.push({ key: name, value: '', enabled: true });
+      changed = true;
+    }
+  }
+
+  // 检查是否有被删除的
+  if (next.length !== current.length) changed = true;
+  if (!changed) {
+    for (const pp of current) {
+      if (!found.has(String(pp.key || '').trim())) {
+        changed = true;
+        break;
+      }
+    }
+  }
+  return { changed, next };
+}
+
 function kvRow(kind, row, index, keyPh, valPh) {
   const disabled = row.enabled === false;
+  // path-params 的 key 由 URL 自动提取，不可手动编辑；也不允许单条删除（改 URL 才会移除）
+  const keyReadonly = kind === 'path-params' ? 'readonly style="opacity:.7;cursor:default"' : '';
+  const showDel = row.isGhost ? false : kind !== 'path-params';
   return `
     <tr data-idx="${index}">
       <td class="kv-check">
         <input type="checkbox" class="checkbox" data-kv-field="enabled" ${disabled ? '' : 'checked'} />
       </td>
-      <td><input class="kv-input key-input ${disabled ? 'dim' : ''}" data-kv-field="key" value="${escapeHtml(row.key || '')}" placeholder="${escapeHtml(keyPh)}" spellcheck="false" /></td>
+      <td><input class="kv-input key-input ${disabled ? 'dim' : ''}" data-kv-field="key" value="${escapeHtml(row.key || '')}" placeholder="${escapeHtml(keyPh)}" spellcheck="false" ${keyReadonly} /></td>
       <td><input class="kv-input ${disabled ? 'dim' : ''}" data-kv-field="value" value="${escapeHtml(row.value ?? '')}" placeholder="${escapeHtml(valPh)}" spellcheck="false" /></td>
       <td class="kv-del">
-        ${row.isGhost ? '' : '<button class="row-icon-btn" data-kv-del type="button" title="删除">✕</button>'}
+        ${showDel ? '<button class="row-icon-btn" data-kv-del type="button" title="删除">✕</button>' : ''}
       </td>
     </tr>`;
 }
@@ -427,17 +490,9 @@ export function updateUrlPreview(tabId) {
   el.textContent = url && url !== 'http://' ? url : '（填写请求地址后可在此预览变量替换结果）';
 
   try {
-    const { unresolved } = (() => {
-      // 只在需要时做完整编译
-      const mod = req;
-      const text = JSON.stringify(mod);
-      const found = [...text.matchAll(/\{\{\s*([^{}]+?)\s*\}\}/g)]
-        .map((m) => m[1].trim())
-        .filter((n) => !n.startsWith('$'));
-      const known = new Set(availableVariables().map((v) => v.name));
-      return { unresolved: [...new Set(found.filter((n) => !known.has(n) && !known.has(n.replace(/^env\./, ''))))] };
-    })();
-    badge.textContent = unresolved.length ? `⚠ 未定义变量：${unresolved.join(', ')}` : '';
+    // 用 compileRequest 拿到完整的 unresolved（包含 {{变量}} 和 {路径参数}）
+    const { unresolved } = compileRequest(req);
+    badge.textContent = unresolved.length ? `⚠ 未定义：${unresolved.join(', ')}` : '';
   } catch {
     badge.textContent = '';
   }
@@ -514,7 +569,19 @@ export function initRequestEvents(delegator) {
   on(root, 'input', '[data-role="url"]', (_e, el) => {
     const tab = tabOf(el);
     if (!tab) return;
+    const req = getRequest(tab.refId);
     updateRequest(tab.refId, { url: el.value }, { silent: true });
+    // URL 变化时自动同步 pathParams
+    const ppSync = syncPathParamsFromUrl(el.value, req.pathParams || []);
+    if (ppSync.changed) {
+      updateRequest(tab.refId, { pathParams: ppSync.next }, { silent: true });
+      // 如果当前就在 params 标签页，刷新面板以显示新增/移除的 path params
+      const vs = subtabState(tab.id);
+      if (vs.reqSubtab === 'params') {
+        renderRequestBody(tab);
+        renderRequestSubtabs(tab);
+      }
+    }
     updateUrlPreview(tab.id);
   });
 
@@ -715,6 +782,7 @@ function bindKvEvents(root) {
   const syncRows = (tab, kind, rows, { silent = true } = {}) => {
     const req = getRequest(tab.refId);
     if (kind === 'params') updateRequest(tab.refId, { params: rows }, { silent });
+    else if (kind === 'path-params') updateRequest(tab.refId, { pathParams: rows }, { silent });
     else if (kind === 'headers') updateRequest(tab.refId, { headers: rows }, { silent });
     else updateRequest(tab.refId, { body: { ...req.body, fields: rows } }, { silent });
   };
@@ -731,6 +799,7 @@ function bindKvEvents(root) {
 
     let rows;
     if (kind === 'params') rows = [...(req.params || [])];
+    else if (kind === 'path-params') rows = [...(req.pathParams || [])];
     else if (kind === 'headers') rows = [...(req.headers || [])];
     else rows = [...((req.body || {}).fields || [])];
 
@@ -766,6 +835,7 @@ function bindKvEvents(root) {
     const req = readRows(tab);
     let rows;
     if (kind === 'params') rows = [...(req.params || [])];
+    else if (kind === 'path-params') rows = [...(req.pathParams || [])];
     else if (kind === 'headers') rows = [...(req.headers || [])];
     else rows = [...((req.body || {}).fields || [])];
     if (!rows[idx]) return;
@@ -796,6 +866,7 @@ function bindKvEvents(root) {
     const req = readRows(tab);
     let rows;
     if (kind === 'params') rows = [...(req.params || [])];
+    else if (kind === 'path-params') rows = [...(req.pathParams || [])];
     else if (kind === 'headers') rows = [...(req.headers || [])];
     else rows = [...((req.body || {}).fields || [])];
     rows.splice(idx, 1);

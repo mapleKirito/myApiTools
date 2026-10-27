@@ -329,6 +329,29 @@ export function compileRequest(request) {
   // ---- 拼装最终 URL ----
   const settings = state.workspace.settings;
   const opts = request.options || {};
+
+  // ---- 路径参数替换：{paramName} → pathParams 中的值 ----
+  // 必须在 new URL() 之前做，否则 URL 构造器会把 { } 转义成 %7B%7D
+  const pathParams = request.pathParams || [];
+  if (pathParams.length) {
+    // 先对每个 pathParam 的值做 {{变量}} 解析
+    const ppMap = new Map();
+    for (const pp of pathParams) {
+      if (pp.enabled === false || !String(pp.key || '').trim()) continue;
+      const k = String(pp.key).trim();
+      const vRes = resolveString(String(pp.value ?? ''), map);
+      collect(vRes);
+      ppMap.set(k, encodeURIComponent(vRes.value));
+    }
+    // 替换路径段中的 {name}
+    finalUrl = finalUrl.replace(/\{([^{}]+?)\}/g, (full, rawName) => {
+      const name = rawName.trim();
+      if (ppMap.has(name)) return ppMap.get(name);
+      if (!unresolved.includes(name)) unresolved.push(name);
+      return full; // 保留原样让用户看到哪个没填
+    });
+  }
+
   let url;
   try {
     url = new URL(finalUrl);

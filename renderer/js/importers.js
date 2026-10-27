@@ -6,6 +6,7 @@
  */
 
 import { uid, clone } from './helpers.js';
+import { compileRequest } from './vars.js';
 
 /* ==================================================================== *
  * cURL 解析
@@ -666,11 +667,24 @@ export function toPostmanCollection(name, collections, requests) {
 
 /** 生成可粘贴到终端的 cURL 命令 */
 export function toCurl(request, resolved = null) {
-  const url = resolved ? resolved.url : request.url;
+  // 优先使用 compileRequest 拿到完整编译后的 URL（含路径参数替换）和 headers
+  let compiledUrl = request.url || '';
+  let compiledHeaders = null;
+  try {
+    const { descriptor } = compileRequest(request);
+    compiledUrl = descriptor.url;
+    compiledHeaders = descriptor.headers;
+  } catch {
+    // 编译失败时 fallback
+  }
+
+  const url = resolved ? resolved.url : compiledUrl;
   const parts = [`curl -X ${(request.method || 'GET').toUpperCase()} '${url}'`];
-  const headers = resolved ? Object.entries(resolved.headers || {}) : (request.headers || [])
-    .filter((h) => h.enabled !== false && h.key)
-    .map((h) => [h.key, h.value]);
+  const headers = compiledHeaders
+    ? compiledHeaders.map(([k, v]) => [k, v])
+    : (request.headers || [])
+        .filter((h) => h.enabled !== false && h.key)
+        .map((h) => [h.key, h.value]);
   for (const [k, v] of headers) {
     parts.push(`  -H '${String(k).replace(/'/g, "'\\''")}: ${String(v).replace(/'/g, "'\\''")}'`);
   }
