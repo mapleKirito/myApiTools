@@ -550,7 +550,11 @@ function showServicesDialog() {
         project.serviceUrls = svcs;
         project.updatedAt = Date.now();
         state.dirtyProjects.add(project.id);
-        commit({ kind: 'project', ids: [project.id] });
+        commit({ kind: 'project', ids: [project.id], silent: true });
+        // 环境 serviceUrls 也被改了，单独 commit 让同步层把它们带上
+        if (project.environments && project.environments.length) {
+          commit({ kind: 'environment', ids: project.environments.map((e) => e.id), silent: true });
+        }
         close();
         toastOk('服务定义已保存');
         bus.emit('change');
