@@ -1133,6 +1133,7 @@ async function boot() {
   bus.on('env-change', () => {
     refreshTopbar();
     renderSidebar();
+    renderPanes({ force: true });
     const tab = activeTab();
     if (tab && tab.type === 'environments') renderEnvContent(tab);
   });

@@ -562,8 +562,16 @@ function isDescendant(ancestorId, maybeChildId) {
 }
 
 /* ----------------------------- 环境 ----------------------------- */
-export function createEnvironment(name = '新环境', variables = []) {
-  const item = { id: uid('env'), name, variables, createdAt: Date.now(), updatedAt: Date.now(), deleted: false };
+export function createEnvironment(name = '新环境', variables = [], baseUrl = '') {
+  const item = {
+    id: uid('env'),
+    name,
+    baseUrl: String(baseUrl || '').trim(),
+    variables,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    deleted: false,
+  };
   state.workspace.environments.push(item);
   commit({ kind: 'environment', ids: [item.id] });
   return item;

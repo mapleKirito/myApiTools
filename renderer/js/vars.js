@@ -177,10 +177,23 @@ export function compileRequest(request) {
   const collect = (r) => unresolved.push(...r.unresolved);
 
   // ---- URL + 查询参数 ----
+  // baseUrl 也走变量替换，支持 {{host}}/api 这种写法
+  const env = getActiveEnv();
+  const baseRes = env ? resolveString(env.baseUrl || '', map) : { value: '', unresolved: [] };
+  collect(baseRes);
+  let baseUrl = baseRes.value.trim();
+
   const urlRes = resolveString(request.url || '', map);
   collect(urlRes);
   let finalUrl = urlRes.value.trim();
-  if (finalUrl && !/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(finalUrl)) {
+
+  // 相对路径拼接：baseUrl 有值且请求 url 以单斜杠开头，才拼到一起；
+  // http:// / https:// / // 开头都视为完整地址，不参与拼接
+  const isRelative = /^\/(?!\/)/.test(finalUrl);
+  if (baseUrl && isRelative) {
+    const tail = finalUrl.replace(/^\/+/, '');
+    finalUrl = baseUrl.replace(/\/+$/, '') + '/' + tail;
+  } else if (finalUrl && !/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(finalUrl)) {
     // 没有协议时补上 http://，方便直接贴 127.0.0.1:8080/xxx
     finalUrl = 'http://' + finalUrl.replace(/^\/+/, '');
   }

@@ -769,6 +769,29 @@ pre.code-block {
 .env-detail-head .spacer { flex: 1; }
 .env-detail-body { flex: 1; overflow: auto; padding: 12px; min-height: 0; }
 
+.env-baseurl-row {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.env-baseurl-row [data-env-baseurl] {
+  width: 100%;
+  height: 28px;
+  padding: 0 9px;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  outline: none;
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+.env-baseurl-row [data-env-baseurl]:focus {
+  border-color: var(--accent-line);
+  background: var(--bg-3);
+}
+
 /* ============================ 设置页 ============================ */
 /* 滚动容器必须铺满主区域：滚动条才会贴在最右侧，和其他标签保持一致。
    内容宽度交给内层 .settings-inner 收窄，避免大屏下文字行过长。
