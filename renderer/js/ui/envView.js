@@ -14,6 +14,7 @@ import {
   setActiveEnv,
   getEnvironment,
   setGlobals,
+  activeProject,
 } from '../state.js';
 import { escapeHtml } from '../helpers.js';
 import { DYNAMIC_NAMES } from '../vars.js';
@@ -98,6 +99,25 @@ export function renderEnvContent(tab) {
       return;
     }
     const isActive = activeId === env.id;
+    const proj = activeProject();
+    const defs = (proj && proj.serviceUrls) || [];
+    const envSvcMap = new Map((env.serviceUrls || []).map((r) => [r.serviceId, r.url]));
+    const serviceRows = defs.map((d) => {
+      const url = envSvcMap.get(d.id) || '';
+      return `
+        <div class="env-svc-row" data-env-svc="${escapeHtml(d.id)}">
+          <span class="env-svc-label">${d.isDefault ? '★ ' : ''}${escapeHtml(d.name)}</span>
+          <input type="text" data-env-svc-url value="${escapeHtml(url)}" placeholder="https://api.demo.com  可引用 {{host}}" spellcheck="false" />
+        </div>`;
+    }).join('');
+    const serviceBlock = defs.length ? `
+      <div class="env-section">
+        <div class="env-section-head">服务地址（当前环境）</div>
+        <div class="field-hint" style="margin:2px 0 8px">
+          这些 URL 会覆盖项目服务定义，切换环境时生效。可引用 {{变量}}（优先用当前环境变量）。
+        </div>
+        <div class="env-svc-list">${serviceRows}</div>
+      </div>` : '';
     detailHost.innerHTML = `
       <div class="env-detail-head">
         <input type="text" data-env-name value="${escapeHtml(env.name)}"
@@ -109,6 +129,7 @@ export function renderEnvContent(tab) {
         <button class="btn danger" data-env-delete type="button">删除</button>
       </div>
       <div class="env-detail-body">
+        ${serviceBlock}
         ${varTable('env', env.variables || [])}
       </div>`;
   }
@@ -203,6 +224,29 @@ export function initEnvEvents(root) {
   on(root, 'blur', '[data-env-name]', (_e, el) => {
     bus.emit('env-change');
     bus.emit('sidebar');
+  }, true);
+
+  on(root, 'input', '[data-env-svc-url]', (_e, el) => {
+    if (state.envPanelId === GLOBALS_ID) return;
+    const env = getEnvironment(state.envPanelId);
+    if (!env) return;
+    const rowEl = el.closest('[data-env-svc]');
+    const serviceId = rowEl && rowEl.dataset.envSvc;
+    if (!serviceId) return;
+    // 就地改 env.serviceUrls 里的对应行（保证引用稳定，silent 更新防炸渲染）
+    let rows = env.serviceUrls || [];
+    const idx = rows.findIndex((r) => r.serviceId === serviceId);
+    if (idx >= 0) {
+      rows[idx] = { ...rows[idx], url: el.value };
+    } else {
+      rows = [...rows, { serviceId, url: el.value }];
+    }
+    env.serviceUrls = rows;
+    updateEnvironment(state.envPanelId, { serviceUrls: rows }, { silent: true });
+  });
+
+  on(root, 'blur', '[data-env-svc-url]', () => {
+    bus.emit('env-change');
   }, true);
 
   on(root, 'click', '[data-env-activate]', () => {

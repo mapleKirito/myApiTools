@@ -438,8 +438,7 @@ function showServicesDialog() {
       return `
         <div class="service-row" ${idAttr}>
           <span class="service-row-default">${s.isDefault ? '★' : ''}</span>
-          <input type="text" data-svc-name value="${escapeHtml(s.name)}" placeholder="服务名" />
-          <input type="text" data-svc-url value="${escapeHtml(s.url)}" placeholder="https://demo.com/api  {{host}}/api" spellcheck="false" />
+          <input type="text" data-svc-name value="${escapeHtml(s.name)}" placeholder="服务名（例如 user-api）" />
           <label class="service-row-isdefault"><input type="checkbox" data-svc-default ${s.isDefault ? 'checked' : ''} />默认</label>
           <button class="row-icon-btn" data-svc-del title="删除" type="button">✕</button>
         </div>`;
@@ -452,7 +451,8 @@ function showServicesDialog() {
     wide: true,
     bodyHtml: `
       <div class="field-hint" style="margin-bottom:10px">
-        请求地址以 <span class="mono">/</span> 开头时自动拼接所选服务的 URL。可引用 {{变量}}，值从当前环境取。
+        项目只维护服务清单，实际 URL 到每个<b>环境</b>里填（环境详情面板里会多出「服务地址」区域）。
+        同一个服务在不同环境可以配不同地址。
       </div>
       <div class="service-list" data-service-list>${render()}</div>`,
     footerHtml: '<button class="btn" data-svc-add type="button">＋ 新增服务</button><span class="spacer"></span><button class="btn primary" data-svc-save type="button">保存</button>',
@@ -462,12 +462,10 @@ function showServicesDialog() {
       const collectRow = (rowEl) => {
         const id = rowEl.dataset.svc || 'svc_' + uid('svc');
         const nameEl = rowEl.querySelector('[data-svc-name]');
-        const urlEl = rowEl.querySelector('[data-svc-url]');
         const defEl = rowEl.querySelector('[data-svc-default]');
         return {
           id,
           name: String(nameEl.value || '服务').trim() || '服务',
-          url: String(urlEl.value || '').trim(),
           isDefault: !!defEl.checked,
         };
       };
@@ -477,7 +475,6 @@ function showServicesDialog() {
         const next = {
           id: 'svc_' + uid('svc'),
           name: '',
-          url: '',
           isDefault: isEmpty,
         };
         project.serviceUrls = [...(project.serviceUrls || []), next];
@@ -523,12 +520,39 @@ function showServicesDialog() {
           seen.add(s.id);
           return true;
         });
+
+        // 同步更新每个环境里的 serviceUrls（新增服务补空行，删除服务移除对应行）
+        const keptIds = new Set(svcs.map((s) => s.id));
+        const oldDefs = project.serviceUrls || [];
+        const renamedMap = new Map(); // 旧id -> 新id（用户在 dialog 里改了 id 时）
+        oldDefs.forEach((o) => {
+          const match = svcs.find((n) => n.id === o.id || (o.name && o.name === n.name));
+          if (match && match.id !== o.id) renamedMap.set(o.id, match.id);
+        });
+
+        for (const env of (project.environments || [])) {
+          const envMap = new Map();
+          (env.serviceUrls || []).forEach((r) => { if (r && r.serviceId) envMap.set(r.serviceId, r); });
+
+          const newRows = svcs.map((s) => {
+            // 先按新 id 找；若没找到，尝试用旧 id 的映射（重命名场景）
+            let row = envMap.get(s.id);
+            if (!row) {
+              const oldMatchingId = [...renamedMap.entries()].find(([, newId]) => newId === s.id)?.[0];
+              if (oldMatchingId) row = envMap.get(oldMatchingId);
+            }
+            return { serviceId: s.id, url: row ? row.url : '' };
+          });
+          env.serviceUrls = newRows;
+          env.updatedAt = Date.now();
+        }
+
         project.serviceUrls = svcs;
         project.updatedAt = Date.now();
         state.dirtyProjects.add(project.id);
         commit({ kind: 'project', ids: [project.id] });
         close();
-        toastOk('服务配置已保存');
+        toastOk('服务定义已保存');
         bus.emit('change');
         bus.emit('env-change');
       };

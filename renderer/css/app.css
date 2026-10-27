@@ -181,6 +181,19 @@ input, textarea { user-select: text; }
 .service-row input[data-svc-name] { max-width: 120px; }
 .service-row-isdefault { display: flex; align-items: center; gap: 2px; font-size: 11px; color: var(--text-2); white-space: nowrap; user-select: none; }
 
+/* 环境详情里的服务地址区 */
+.env-section { margin-bottom: 12px; }
+.env-section-head { font-size: 12px; font-weight: 600; color: var(--text-2); margin: 0 0 4px 0; }
+.env-svc-list { display: flex; flex-direction: column; gap: 4px; }
+.env-svc-row { display: flex; align-items: center; gap: 8px; }
+.env-svc-label { min-width: 110px; font-size: 12px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.env-svc-row input[data-env-svc-url] {
+  flex: 1; min-width: 0; height: 28px; padding: 0 8px;
+  background: var(--bg-1); border: 1px solid var(--border);
+  border-radius: var(--radius); font-family: var(--mono); font-size: 12px; outline: none;
+}
+.env-svc-row input[data-env-svc-url]:focus { border-color: var(--accent-line); }
+
 .topbar-search { position: relative; flex: 1; max-width: 420px; }
 #global-search {
   width: 100%; height: 28px;

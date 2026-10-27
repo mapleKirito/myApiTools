@@ -95,9 +95,9 @@ function createProjectRecord(id, name) {
     globalsUpdatedAt: 0,
     history: [],
     activeEnvId: null,
-    // 项目级服务注册，跨环境共享
+    // 项目级只定义服务名（不含 url），实际地址在每个 environment.serviceUrls 里维护
     serviceUrls: [
-      { id: 'svc_default', name: '默认', url: '', isDefault: true },
+      { id: 'svc_default', name: '默认', isDefault: true },
     ],
   };
 }

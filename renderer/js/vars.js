@@ -166,20 +166,24 @@ export function resolveDeep(input, map, depth = 0) {
 /* ------------------------- 请求编译 ------------------------- */
 
 /**
- * 沿 collection 父链解析服务 URL 继承。
+ * 沿 collection 父链解析服务定义继承。
+ * 只返回项目级服务定义（{id, name, isDefault}），**不含 url**；
+ * 实际 URL 从激活环境的 serviceUrls 里按 serviceId 查。
  * 优先级（从高到低）：
  *   1. request.serviceUrlId（请求显式指定）
  *   2. 沿 collection.parentId 上溯找首个有 serviceUrlId 的文件夹
  *   3. project.serviceUrls 里 isDefault=true 的服务
- *   4. 以上都没有 → 返回 null（不拼接）
+ *   4. 以上都没有 → 返回 null
  */
 export function resolveServiceUrl(request) {
   const project = (state.workspace && state.workspace.projects || []).find((p) => p.id === state.workspace.activeProjectId) || null;
   if (!project) return null;
 
+  const defs = project.serviceUrls || [];
+
   // 1. 请求自己指定
   if (request && request.serviceUrlId) {
-    const svc = (project.serviceUrls || []).find((s) => s.id === request.serviceUrlId);
+    const svc = defs.find((s) => s.id === request.serviceUrlId);
     if (svc) return svc;
   }
 
@@ -191,7 +195,7 @@ export function resolveServiceUrl(request) {
     while (col && !seen.has(col.id)) {
       seen.add(col.id);
       if (col.serviceUrlId) {
-        const svc = (project.serviceUrls || []).find((s) => s.id === col.serviceUrlId);
+        const svc = defs.find((s) => s.id === col.serviceUrlId);
         if (svc) return svc;
       }
       if (!col.parentId) break;
@@ -200,14 +204,23 @@ export function resolveServiceUrl(request) {
   }
 
   // 3. 项目默认服务
-  const def = (project.serviceUrls || []).find((s) => s.isDefault);
+  const def = defs.find((s) => s.isDefault);
   return def || null;
+}
+
+/** 从激活环境取某个服务的 URL（未找到返回空串） */
+function getServiceUrlFromEnv(serviceDef) {
+  if (!serviceDef) return '';
+  const env = getActiveEnv();
+  if (!env) return '';
+  const row = (env.serviceUrls || []).find((r) => r.serviceId === serviceDef.id);
+  return row ? String(row.url || '').trim() : '';
 }
 
 /**
  * 把一个配置态的 request 编译成可直接交给主进程执行的描述对象
  * @param {object} request 集合中的请求配置
- * @returns {{descriptor:object, unresolved:string[], resolvedUrl:string, preview:object, serviceUsed:{name,url}}}
+ * @returns {{descriptor:object, unresolved:string[], resolvedUrl:string, preview:object, serviceUsed:{id,name,url}}}
  */
 export function compileRequest(request) {
   if (!request) throw new Error('请求不存在');
@@ -218,7 +231,8 @@ export function compileRequest(request) {
 
   // ---- URL + 查询参数 ----
   const svc = resolveServiceUrl(request);
-  const baseRes = svc ? resolveString(svc.url || '', map) : { value: '', unresolved: [] };
+  const rawUrl = getServiceUrlFromEnv(svc);
+  const baseRes = rawUrl ? resolveString(rawUrl, map) : { value: '', unresolved: [] };
   collect(baseRes);
   let baseUrl = baseRes.value.trim();
 

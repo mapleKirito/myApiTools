@@ -145,19 +145,55 @@ function defaultDeviceName() {
 /* ----------------------------- 项目 ----------------------------- */
 const PROJECT_DATA_KEYS = ['collections', 'requests', 'environments', 'globals', 'history'];
 
-/** 项目级服务注册：跨环境共享名称，但 URL 支持 {{变量}}（值从激活环境取） */
-function normalizeService(row, idx = 0, oldBaseUrl = '') {
-  if (!row || typeof row !== 'object') {
-    // 旧数据兜底：没有 serviceUrls 时，用迁移过来的 baseUrl 造一条默认服务
-    const url = String(oldBaseUrl || '').trim();
-    return { id: 'svc_default', name: '默认', url, isDefault: true };
+/**
+ * 项目级服务定义：只有 id/name/isDefault，没有 url。
+ * URL 由环境维护（env.serviceUrls[{serviceId,url}]），这样同一个服务在不同环境可以有不同地址。
+ */
+function normalizeServiceDef(row, idx = 0) {
+  const id = String(row && row.id || ('svc_' + (idx === 0 ? 'default' : uid('svc'))));
+  const name = String(row && row.name || '服务').trim();
+  const isDefault = !!(row && row.isDefault);
+  // 迁移：旧 dev.3 里 service 带 url，放到环境里去（但此时环境尚未标准化，此处只记下来稍后处理）
+  const legacyUrl = String(row && row.url || '').trim();
+  return { id, name, isDefault, _legacyUrl: legacyUrl };
+}
+
+/** 环境级服务 URL 映射：{serviceId, url} */
+function normalizeEnvService(row, defs) {
+  if (row && typeof row === 'object') {
+    return {
+      serviceId: String(row.serviceId || ''),
+      url: String(row.url || '').trim(),
+    };
   }
-  return {
-    id: String(row.id || ('svc_' + (idx === 0 ? 'default' : uid('svc')))),
-    name: String(row.name || '服务').trim(),
-    url: String(row.url || '').trim(),
-    isDefault: !!row.isDefault,
-  };
+  return null;
+}
+
+/**
+ * 把旧项目里 project.serviceUrls 或 env.baseUrl 里的 url 提取出来，
+ * 填到每个环境的 serviceUrls 里（serviceId 指向定义）。
+ */
+function backfillEnvServiceUrls(env, defs, globalLegacyUrls) {
+  const existing = new Map();
+  (env.serviceUrls || []).forEach((r) => { if (r && r.serviceId) existing.set(r.serviceId, r); });
+
+  // 每个定义都确保 env 里有一行
+  const rows = [];
+  for (const d of defs) {
+    const existingRow = existing.get(d.id);
+    let url = '';
+    if (existingRow) {
+      url = existingRow.url || '';
+    } else if (d._legacyUrl) {
+      // 来自 dev.3 之前 project.serviceUrls[].url 的迁移
+      url = d._legacyUrl;
+    } else if (env.baseUrl && defs.length === 1 && d.id === defs[0].id) {
+      // 最老 dev.2 遗留：env.baseUrl 当默认服务的 URL
+      url = env.baseUrl;
+    }
+    rows.push({ serviceId: d.id, url });
+  }
+  env.serviceUrls = rows;
 }
 
 function normalizeProject(p) {
@@ -174,15 +210,27 @@ function normalizeProject(p) {
   };
   for (const key of PROJECT_DATA_KEYS) out[key] = Array.isArray(p[key]) ? p[key] : [];
 
-  // serviceUrls：先取显式提供的；没有就从 environments[0].baseUrl 迁移（dev.2 遗留）
+  // 服务定义：id / name / isDefault，不含 url
   const hasExplicit = Array.isArray(p.serviceUrls) && p.serviceUrls.length;
+  let defs;
   if (hasExplicit) {
-    out.serviceUrls = p.serviceUrls.map((s, i) => normalizeService(s, i));
-    if (!out.serviceUrls.some((s) => s.isDefault) && out.serviceUrls.length) out.serviceUrls[0].isDefault = true;
+    defs = p.serviceUrls.map((s, i) => normalizeServiceDef(s, i));
   } else {
-    const migratedBaseUrl = (out.environments.find((e) => e.baseUrl) && out.environments.find((e) => e.baseUrl).baseUrl) || '';
-    out.serviceUrls = [normalizeService(null, 0, migratedBaseUrl)];
+    defs = [{ id: 'svc_default', name: '默认', isDefault: true, _legacyUrl: '' }];
   }
+  if (!defs.some((s) => s.isDefault) && defs.length) defs[0].isDefault = true;
+  // 环境级 serviceUrls 里的 _legacyUrl 是临时迁移字段，输出前剥离
+  out.serviceUrls = defs.map(({ _legacyUrl, ...rest }) => rest);
+
+  // 每个环境补 serviceUrls（按 defs 建行，迁移旧 URL）
+  out.environments = out.environments.map((e) => {
+    const env = { ...e };
+    delete env.baseUrl; // dev.2 遗留字段，已迁移到 env.serviceUrls
+    backfillEnvServiceUrls(env, defs);
+    // 清洗 env.serviceUrls（只留 serviceId / url）
+    env.serviceUrls = env.serviceUrls.map((r) => ({ serviceId: r.serviceId, url: r.url }));
+    return env;
+  });
 
   // 旧 collection / request 没有 serviceUrlId 时默认为 null（继承）
   out.collections = out.collections.map((c) => ({ ...c, serviceUrlId: c.serviceUrlId || null }));
@@ -592,12 +640,15 @@ function isDescendant(ancestorId, maybeChildId) {
 }
 
 /* ----------------------------- 环境 ----------------------------- */
-export function createEnvironment(name = '新环境', variables = [], baseUrl = '') {
+export function createEnvironment(name = '新环境', variables = []) {
+  // 从当前项目的服务定义派生 serviceUrls 映射（每行 url 留空，让用户在 envView 里填）
+  const proj = activeProject();
+  const serviceUrls = (proj && proj.serviceUrls || []).map((s) => ({ serviceId: s.id, url: '' }));
   const item = {
     id: uid('env'),
     name,
-    baseUrl: String(baseUrl || '').trim(),
     variables,
+    serviceUrls,
     createdAt: Date.now(),
     updatedAt: Date.now(),
     deleted: false,
