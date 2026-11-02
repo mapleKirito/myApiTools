@@ -2,10 +2,15 @@
  * 导入导出解析器验证
  *   node tools/test-importers.mjs
  *
- * importers.js 是纯函数模块（不依赖 window），可直接在 Node 里跑。
+ * importers.js 本身是纯函数模块，但它经由 vars.js 间接引入 state.js，
+ * 而 state.js 在模块顶层就 `const bridge = window.bridge` —— Node 里没有 window，
+ * 静态 import 会在加载阶段直接抛 ReferenceError。所以先补一个最小壳，再动态引入。
  */
 
-import { importFromText, parseCurl, parsePostman, parseOpenApi, toCurl, toPostmanCollection } from '../renderer/js/importers.js';
+globalThis.window = globalThis.window || { bridge: {} };
+
+const { importFromText, parseCurl, parsePostman, parseOpenApi, toCurl, toPostmanCollection } =
+  await import('../renderer/js/importers.js');
 
 let pass = 0;
 let fail = 0;

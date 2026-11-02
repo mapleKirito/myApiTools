@@ -149,6 +149,9 @@ export function renderSettingsContent(tab) {
       </div>
     </div>
 
+    <h3>窗口与托盘</h3>
+    <div data-role="tray-card"></div>
+
     <h3>关于</h3>
     <div class="card">
       <div class="form-row"><label>版本</label><span data-role="app-version">—</span></div>
@@ -164,6 +167,9 @@ export function renderSettingsContent(tab) {
   // 统一交给 paintSyncCard 计算，避免模板和刷新逻辑两处各写一套写法不一致
   paintSyncCard(pane);
   paintUpdateCard(pane);
+  paintTrayCard(pane);
+  // 托盘偏好在主进程那边，异步取回来后再刷一次（第二次进入走缓存，不会闪）
+  loadTrayPrefs().then(() => paintTrayCard(pane)).catch(() => {});
   fillAppInfo(host);
 }
 
@@ -293,6 +299,85 @@ function paintUpdateCard(pane) {
       ${lastChecked} · 安装包从同步服务下载并校验 sha256 后才会唤起安装程序。
     </div>
   `;
+}
+
+/* ==================================================================== *
+ * 窗口与托盘
+ * ---------------------------------------------------------------
+ * 这份偏好不在 workspace 里：它描述的是「这台机器上的这个进程」怎么关窗口，
+ * 既不随登录账号变，也不参与同步。主进程独占 app-prefs.json，这里只经 IPC 读写。
+ * ==================================================================== */
+let trayPrefs = { enabled: true, closeAction: 'ask', trayAvailable: false, platform: '' };
+let trayPrefsLoaded = false;
+
+async function loadTrayPrefs(force = false) {
+  if (trayPrefsLoaded && !force) return trayPrefs;
+  try {
+    trayPrefs = await bridge.prefs.get();
+    trayPrefsLoaded = true;
+  } catch {
+    // 取不到就按默认值先渲染，不能让设置页卡在空白
+  }
+  return trayPrefs;
+}
+
+const CLOSE_ACTION_DESC = {
+  ask: '第一次关闭时弹窗询问，弹窗里可以勾选「不再询问」记住选择。',
+  tray: '关窗口只是把窗口收进托盘，进程继续跑，批量执行不会被打断。',
+  quit: '关窗口就退出应用，托盘图标一起消失。',
+};
+
+function trayCardHtml() {
+  const p = trayPrefs;
+  const action = CLOSE_ACTION_DESC[p.closeAction] ? p.closeAction : 'ask';
+  const platformHint = p.platform === 'linux'
+    ? 'Linux 需要桌面环境支持状态栏图标（AppIndicator / StatusNotifier），不支持的桌面上会退回「关窗口即退出」。'
+    : p.platform === 'darwin'
+      ? 'macOS 上托盘图标出现在顶部菜单栏。'
+      : '托盘图标出现在右下角通知区域（Windows）。';
+
+  const brokenHint = p.enabled && !p.trayAvailable
+    ? '<div class="field-hint text-warn" style="margin-left:142px;margin-top:6px">托盘图标没能创建（当前桌面环境可能不支持状态栏图标），此时关窗口会直接退出。</div>'
+    : '';
+  const disabledHint = !p.enabled
+    ? '<div class="field-hint" style="margin-left:142px;margin-top:6px">托盘已关闭：关窗口会直接退出，也没有图标能把窗口唤回来。</div>'
+    : '';
+
+  return `
+    <div class="card">
+      <div class="form-row">
+        <label>关闭主窗口时</label>
+        <select data-tray="closeAction" ${p.enabled ? '' : 'disabled'}>
+          <option value="ask" ${action === 'ask' ? 'selected' : ''}>每次询问</option>
+          <option value="tray" ${action === 'tray' ? 'selected' : ''}>最小化到托盘</option>
+          <option value="quit" ${action === 'quit' ? 'selected' : ''}>直接退出</option>
+        </select>
+        <span class="desc">${CLOSE_ACTION_DESC[action]}</span>
+      </div>
+      <div class="form-row">
+        <label>系统托盘</label>
+        <label class="switch"><input type="checkbox" data-tray="enabled" ${p.enabled ? 'checked' : ''} /><span>启用托盘图标</span></label>
+        <span class="desc">${platformHint}</span>
+      </div>
+      <div class="btn-row" style="margin-left:142px">
+        <button class="btn" data-tray-act="hide" type="button" ${p.enabled && p.trayAvailable ? '' : 'disabled'}>现在收进托盘</button>
+        ${action !== 'ask'
+          ? '<button class="btn" data-tray-act="ask-again" type="button">恢复为「每次询问」</button>'
+          : ''}
+      </div>
+      ${brokenHint}
+      ${disabledHint}
+    </div>`;
+}
+
+function paintTrayCard(pane) {
+  const host = pane && pane.querySelector('[data-role="tray-card"]');
+  if (!host) return;
+  const key = `${trayPrefs.enabled}|${trayPrefs.closeAction}|${trayPrefs.trayAvailable}|${trayPrefs.platform}`;
+  // 内容没变就别重写：checkbox / select 上正在操作的焦点会被 innerHTML 冲掉
+  if (host.dataset.key === key) return;
+  host.dataset.key = key;
+  host.innerHTML = trayCardHtml();
 }
 
 function syncActionsCard(sy) {
@@ -595,6 +680,65 @@ export function initSettingsEvents(root) {
     if (act === 'unignore') {
       clearIgnored();
       return;
+    }
+  });
+
+  /* ---------- 窗口与托盘 ---------- */
+  // 主进程的关闭确认框里勾了「记住我的选择」时会把新偏好广播过来，
+  // 设置页必须跟着变，否则这里会一直显示「每次询问」而实际已经不问了
+  bridge.prefs.onChanged((p) => {
+    trayPrefs = p;
+    trayPrefsLoaded = true;
+    for (const pane of settingsPanes()) paintTrayCard(pane);
+  });
+
+  on(root, 'change', '[data-tray="enabled"]', async (_e, el) => {
+    const res = await bridge.prefs.set({ tray: { enabled: el.checked } });
+    if (res) {
+      trayPrefs = res;
+      trayPrefsLoaded = true;
+    }
+    for (const pane of settingsPanes()) paintTrayCard(pane);
+    if (!el.checked) {
+      toastWarn('托盘已关闭：关窗口会直接退出');
+    } else if (res && res.trayAvailable) {
+      toastOk('托盘已启用');
+    } else {
+      toastWarn('已启用托盘，但当前桌面环境没能创建托盘图标');
+    }
+  });
+
+  on(root, 'change', '[data-tray="closeAction"]', async (_e, el) => {
+    const res = await bridge.prefs.set({ tray: { closeAction: el.value } });
+    if (res) {
+      trayPrefs = res;
+      trayPrefsLoaded = true;
+    }
+    for (const pane of settingsPanes()) paintTrayCard(pane);
+    toastOk(
+      el.value === 'tray' ? '关闭窗口后将最小化到托盘'
+        : el.value === 'quit' ? '关闭窗口后直接退出'
+          : '关闭窗口时会先询问'
+    );
+  });
+
+  on(root, 'click', '[data-tray-act]', async (_e, el) => {
+    const act = el.dataset.trayAct;
+
+    if (act === 'hide') {
+      const res = await bridge.app.hideToTray();
+      if (!res || !res.ok) toastErr('无法收进托盘');
+      return;
+    }
+
+    if (act === 'ask-again') {
+      const res = await bridge.prefs.set({ tray: { closeAction: 'ask' } });
+      if (res) {
+        trayPrefs = res;
+        trayPrefsLoaded = true;
+      }
+      for (const pane of settingsPanes()) paintTrayCard(pane);
+      toastOk('已恢复为「每次询问」');
     }
   });
 

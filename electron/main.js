@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, protocol, net, dialog, shell, Menu, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, protocol, net, dialog, shell, Menu, clipboard, Tray, nativeImage, Notification } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { pathToFileURL } = require('node:url');
@@ -9,10 +9,18 @@ const { sendRequest } = require('./http-client');
 const { ProfileManager } = require('./profile');
 const { SyncClient } = require('./sync-client');
 const { UpdateClient } = require('./update-client');
+const { AppPrefs } = require('./prefs');
 
 const RENDERER_DIR = path.join(__dirname, '..', 'renderer');
 const APP_SCHEME = 'app';
 const APP_ORIGIN = `${APP_SCHEME}://bundle`;
+
+// 图标：窗口图标走 PNG（三个平台通吃），托盘在 Windows 上优先用 ICO ——
+// 多尺寸 ICO 才能让系统按 DPI 缩放挑到清晰的那一档，单张 PNG 在高分屏上会糊。
+const ASSETS_DIR = path.join(__dirname, 'assets');
+const ICON_PNG = path.join(ASSETS_DIR, 'icon.png');
+const TRAY_PNG = path.join(ASSETS_DIR, 'tray.png');
+const TRAY_ICO = path.join(ASSETS_DIR, 'tray.ico');
 
 // 冒烟测试：关闭硬件加速（无 GPU 环境会崩），并把数据目录隔离到临时位置，
 // 绝不碰用户真实的 workspace.json
@@ -26,6 +34,18 @@ const SMOKE_DIR = (() => {
 
 let mainWindow = null;
 let profileMgr = null;
+let appPrefs = null;
+let tray = null;
+let isQuitting = false;
+let closePrompting = false;
+let trayHintShown = false;
+// 界面是否已经加载完：关闭确认框要走应用内弹窗，界面还没起来就只能退回系统原生框
+let rendererReady = false;
+// 正在等界面回「关窗口怎么处理」，同一时刻只允许有一个
+let pendingClosePrompt = null;
+// 第一次收进托盘时「先提示、后隐藏」的定时器
+let trayHintTimer = null;
+const CLOSE_PROMPT_TIMEOUT = 25000;
 const syncClient = new SyncClient();
 const updateClient = new UpdateClient();
 
@@ -82,6 +102,291 @@ function registerAppProtocol() {
 /* ------------------------------------------------------------------ *
  * 窗口
  * ------------------------------------------------------------------ */
+function showMainWindow() {
+  if (!mainWindow) {
+    createWindow();
+    return;
+  }
+  // 用户主动唤回就撤销「提示完再藏起来」的延时，否则窗口刚露脸又会自己消失
+  clearTimeout(trayHintTimer);
+  trayHintTimer = null;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  if (!mainWindow.isVisible()) mainWindow.show();
+  mainWindow.focus();
+}
+
+/**
+ * 关闭时收进托盘：窗口只是隐藏，进程、批量执行、未落盘的编辑都还在。
+ * 第一次收进托盘时先在界面里说一句「窗口去哪了」，停留一小会儿再隐藏 ——
+ * 系统通知（Notification）长得跟应用完全不是一套，而且用户此刻正盯着窗口，
+ * 在窗口里回答比弹一个系统气泡更直接。界面没起来时才退回系统通知。
+ */
+function hideToTray() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+
+  if (trayHintShown) {
+    mainWindow.hide();
+    return;
+  }
+  trayHintShown = true;
+
+  if (!canUseInAppPrompt()) {
+    hintTrayViaSystem();
+    mainWindow.hide();
+    return;
+  }
+
+  sendToRenderer('app:tray-hint');
+  clearTimeout(trayHintTimer);
+  trayHintTimer = setTimeout(() => {
+    trayHintTimer = null;
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
+  }, 1400);
+}
+
+/** 界面不可用时的兜底：用系统通知告知「还在后台」 */
+function hintTrayViaSystem() {
+  try {
+    if (!Notification.isSupported()) return;
+    new Notification({
+      title: 'MyApiTools 仍在后台运行',
+      body: '窗口已收进系统托盘，点托盘图标可以重新打开；右键托盘图标可以彻底退出。',
+      silent: true,
+    }).show();
+  } catch {
+    /* 系统通知不可用就算了，托盘本身还在 */
+  }
+}
+
+function sendToRenderer(channel, payload) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(channel, payload);
+  }
+}
+
+/** 界面能不能弹应用内对话框（没加载完 / 已销毁 / 正在重新加载都不行） */
+function canUseInAppPrompt() {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  if (!rendererReady) return false;
+  try {
+    return !mainWindow.webContents.isLoading();
+  } catch {
+    return false;
+  }
+}
+
+/** 应用偏好快照：带上平台与托盘可用性，设置页直接拿去渲染 */
+function prefsSnapshot() {
+  if (!appPrefs) return { tray: { enabled: false, closeAction: 'quit' }, platform: process.platform, trayAvailable: false, version: app.getVersion() };
+  const p = appPrefs.get();
+  return {
+    ...p,
+    platform: process.platform,
+    // 托盘图标此刻是否真的存在（Linux 某些桌面环境建不起来会是 false）
+    trayAvailable: !!tray,
+    version: app.getVersion(),
+  };
+}
+
+/** 结束一次「等界面回话」，没在等就直接忽略（超时后再点按钮之类的） */
+function settleClosePrompt(decision) {
+  const p = pendingClosePrompt;
+  if (!p) return;
+  pendingClosePrompt = null;
+  clearTimeout(p.timer);
+  p.resolve(decision);
+}
+
+function quitApp() {
+  isQuitting = true;
+  clearTimeout(trayHintTimer);
+  trayHintTimer = null;
+  if (tray) {
+    tray.destroy();
+    tray = null;
+  }
+  app.quit();
+}
+
+/* ------------------------------ 托盘 ------------------------------ */
+function trayMenu() {
+  return Menu.buildFromTemplate([
+    { label: `MyApiTools v${app.getVersion()}`, enabled: false },
+    { type: 'separator' },
+    { label: '显示主窗口', click: () => showMainWindow() },
+    {
+      label: '检查更新…',
+      click: () => {
+        showMainWindow();
+        sendToRenderer('menu', { action: 'check-update' });
+      },
+    },
+    {
+      label: '设置…',
+      click: () => {
+        showMainWindow();
+        sendToRenderer('menu', { action: 'open-settings' });
+      },
+    },
+    { type: 'separator' },
+    { label: '彻底退出', click: () => quitApp() },
+  ]);
+}
+
+function createTray() {
+  // 冒烟测试不建托盘：临时数据目录 + 无头环境里留一个托盘图标没有意义，
+  // 反而会在测试收尾时拖住进程退出。
+  if (SMOKE_DIR) return;
+  if (tray) return;
+  if (!appPrefs || !appPrefs.get().tray.enabled) return;
+
+  try {
+    const file = process.platform === 'win32' ? TRAY_ICO : TRAY_PNG;
+    const img = nativeImage.createFromPath(file);
+    tray = new Tray(img.isEmpty() ? TRAY_PNG : img);
+    tray.setToolTip(`MyApiTools v${app.getVersion()}`);
+    tray.setContextMenu(trayMenu());
+    // Windows / Linux：单击直接唤回窗口（Windows 上双击会先触发一次 click，
+    // 结果一样，所以不额外处理）
+    tray.on('click', () => showMainWindow());
+    if (process.platform === 'darwin') {
+      // macOS 上托盘是「程序坞之外的入口」，双击没意义，忽略掉避免误触
+      tray.setIgnoreDoubleClickEvents(true);
+    }
+  } catch (e) {
+    // Linux 某些桌面环境没有 StatusNotifier / AppIndicator，创建会抛错。
+    // 这种情况退回「关窗口即退出」，不能让整个应用起不来。
+    console.error('托盘创建失败（该桌面环境可能不支持）：', e && e.message ? e.message : e);
+    tray = null;
+  }
+}
+
+function destroyTray() {
+  if (!tray) return;
+  try {
+    tray.destroy();
+  } catch {
+    /* 已经没了就算了 */
+  }
+  tray = null;
+}
+
+/** 偏好变更后重新对齐托盘状态（开关托盘 / 改关闭行为都走这里） */
+function applyTrayPrefs() {
+  if (!appPrefs) return;
+  if (appPrefs.get().tray.enabled) createTray();
+  else destroyTray();
+}
+
+/**
+ * 关闭主窗口时的行为
+ * ---------------------------------------------------------------
+ * 三种去向：问一次 / 收进托盘 / 直接退出。
+ * 注意「问一次」是异步弹框，所以必须先 preventDefault 把这次关闭拦下来，
+ * 等用户选完再决定 hide 还是 quit —— 中途不让窗口关掉，否则窗口没了就没法问。
+ */
+function attachCloseBehavior(win) {
+  win.on('close', (e) => {
+    if (isQuitting) return;
+
+    const p = appPrefs ? appPrefs.get().tray : { enabled: false, closeAction: 'quit' };
+    // 托盘没开（或这个平台建不起来）→ 关窗口就是退出，走 window-all-closed
+    if (!p.enabled || !tray) return;
+    if (p.closeAction === 'quit') return;
+
+    e.preventDefault();
+
+    if (p.closeAction === 'tray') {
+      hideToTray();
+      return;
+    }
+    // closeAction === 'ask'：同一时刻只弹一个框
+    if (closePrompting) return;
+    askCloseAction();
+  });
+}
+
+/**
+ * 关闭确认：优先用应用内弹窗（和主界面一套样式），界面不可用时退回系统框。
+ * 两条路都必须返回同一种结构 { action: 'tray'|'quit'|'cancel', remember:boolean }，
+ * 后面的分支就不用关心用户到底是在哪个框里点的。
+ */
+async function askCloseAction() {
+  closePrompting = true;
+  try {
+    let decision = null;
+
+    if (canUseInAppPrompt()) {
+      const answer = new Promise((resolve) => {
+        pendingClosePrompt = {
+          resolve,
+          timer: setTimeout(() => {
+            // 界面卡住 / 回复丢了（理论上不该发生）也不能把窗口关不掉：
+            // 超时后退回系统原生框，至少给用户一条能走的路
+            console.error('关闭确认框超时未收到界面回复，退回系统对话框');
+            sendToRenderer('app:close-prompt-dismiss');
+            settleClosePrompt(null);
+          }, CLOSE_PROMPT_TIMEOUT),
+        };
+      });
+      sendToRenderer('app:close-prompt', { defaultAction: 'tray' });
+      decision = await answer;
+    }
+
+    if (!decision) {
+      // 窗口已经关了 / 正在退出：这时候再弹原生框没有意义（屏幕上已经没有主窗口了）
+      if (isQuitting || !mainWindow || mainWindow.isDestroyed()) return;
+      decision = await askCloseActionNative();
+    }
+
+    // 用户取消 / 直接关掉原生框：窗口保持原样
+    if (!decision || decision.action === 'cancel') return;
+
+    const toTray = decision.action === 'tray';
+    if (decision.remember) {
+      appPrefs.set({ tray: { closeAction: toTray ? 'tray' : 'quit' } });
+      // 广播带平台与托盘可用性的快照，否则设置页会把「没有 trayAvailable」
+      // 当成「托盘建不起来」，误报一条警告
+      sendToRenderer('app-prefs-changed', prefsSnapshot());
+    }
+
+    if (toTray) hideToTray();
+    else quitApp();
+  } catch (e) {
+    console.error('关闭确认弹窗失败：', e && e.message ? e.message : e);
+  } finally {
+    closePrompting = false;
+  }
+}
+
+/** 兜底用的系统原生确认框（界面没加载完时的唯一选择） */
+async function askCloseActionNative() {
+  const opts = {
+    type: 'question',
+    title: '关闭窗口',
+    message: '要让 MyApiTools 继续在托盘里运行吗？',
+    detail:
+      '「保留在托盘」：窗口收进系统托盘，正在跑的批量执行和没保存的编辑都不会中断，' +
+      '点托盘图标可以重新打开。\n' +
+      '「彻底退出」：关闭应用，所有窗口一并关掉。',
+    buttons: ['保留在托盘', '彻底退出'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+    checkboxLabel: '记住我的选择，下次不再询问',
+    checkboxChecked: false,
+  };
+  try {
+    const res = mainWindow && !mainWindow.isDestroyed()
+      ? await dialog.showMessageBox(mainWindow, opts)
+      : await dialog.showMessageBox(opts);
+    return { action: res.response === 0 ? 'tray' : 'quit', remember: !!res.checkboxChecked };
+  } catch (e) {
+    console.error('系统关闭确认框失败：', e && e.message ? e.message : e);
+    return null;
+  }
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1440,
@@ -91,6 +396,7 @@ function createWindow() {
     show: false,
     backgroundColor: '#16181d',
     title: 'MyApiTools',
+    icon: ICON_PNG,
     autoHideMenuBar: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -106,7 +412,24 @@ function createWindow() {
   });
 
   mainWindow.once('ready-to-show', () => mainWindow.show());
+  attachCloseBehavior(mainWindow);
+
+  // 界面加载状态：关闭确认框只在界面活着的时候走应用内弹窗
+  mainWindow.webContents.on('did-start-loading', () => { rendererReady = false; });
+  mainWindow.webContents.on('did-finish-load', () => { rendererReady = true; });
+
+  mainWindow.on('show', () => {
+    // 「先提示、后隐藏」还没走完就被唤回来了 → 撤销这次隐藏，否则刚露脸又消失
+    clearTimeout(trayHintTimer);
+    trayHintTimer = null;
+  });
+
   mainWindow.on('closed', () => {
+    rendererReady = false;
+    clearTimeout(trayHintTimer);
+    trayHintTimer = null;
+    // 窗口没了，等回复的那个 Promise 不会有结果了，放它走
+    settleClosePrompt(null);
     mainWindow = null;
   });
 
@@ -434,7 +757,42 @@ function registerIpc() {
     return { ok: true };
   });
 
-  ipcMain.handle('app:minimizeToTrayHint', () => ({ ok: true }));
+  /* ---- 应用级偏好：托盘 / 关闭行为 ----
+   * 这份配置不进 workspace、不参与同步、不按账号隔离 —— 它描述的是
+   * 「这台机器上这个进程」的窗口行为，换账号不该跟着变。 */
+  ipcMain.handle('app:prefs:get', () => prefsSnapshot());
+
+  ipcMain.handle('app:prefs:set', (_e, partial) => {
+    appPrefs.set(partial);
+    applyTrayPrefs();
+    const snap = prefsSnapshot();
+    // 主进程自己也可能是弹窗改的偏好（关闭确认框里的「记住选择」），
+    // 这里广播一次让设置页与状态栏跟上
+    sendToRenderer('app-prefs-changed', snap);
+    return snap;
+  });
+
+  ipcMain.handle('app:hideToTray', () => {
+    hideToTray();
+    return { ok: true, trayAvailable: !!tray };
+  });
+
+  ipcMain.handle('app:show', () => {
+    showMainWindow();
+    return { ok: true };
+  });
+
+  /* ---- 关闭确认：界面回话 ----
+   * 渲染进程每条出口（确定 / 取消 / Esc / 点遮罩）都必须回一条，
+   * 否则 askCloseAction 会一直等到超时才退回系统框。 */
+  ipcMain.on('app:close-decision', (_e, payload) => {
+    if (!pendingClosePrompt) return;   // 超时或窗口已关，这次回话没有意义
+    const action = payload && payload.action;
+    settleClosePrompt({
+      action: action === 'tray' || action === 'quit' ? action : 'cancel',
+      remember: !!(payload && payload.remember),
+    });
+  });
 }
 
 /* ------------------------------------------------------------------ *
@@ -445,19 +803,24 @@ if (!gotLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
-    }
+    // 用户又双击了一次快捷方式：把收在托盘里的窗口捞出来，而不是开第二个实例
+    showMainWindow();
   });
 
   app.whenReady().then(() => {
+    // 托盘通知（Windows 的 toast）要靠 AUMID 认身份，必须和安装包的 appId 一致，
+    // 否则通知不会显示、或者显示成 electron.app.xxx
+    if (process.platform === 'win32') app.setAppUserModelId('com.myapitools.app');
+
+    appPrefs = new AppPrefs(app.getPath('userData'));
     profileMgr = new ProfileManager(app.getPath('userData'));
     profileMgr.getActive().load();
     registerAppProtocol();
     registerIpc();
     buildMenu();
     createWindow();
+    // 托盘要在窗口之后建：菜单里的「显示主窗口 / 检查更新」都依赖 mainWindow
+    applyTrayPrefs();
 
     // 端到端冒烟测试：真实启动界面并模拟用户操作（npm run smoke）
     if (SMOKE_DIR) {
@@ -470,7 +833,9 @@ if (!gotLock) {
     }
 
     app.on('activate', () => {
+      // macOS：点程序坞图标时，窗口可能只是被隐藏了
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
+      else showMainWindow();
     });
   });
 
@@ -480,6 +845,9 @@ if (!gotLock) {
   });
 
   app.on('before-quit', () => {
+    // 从这里开始，「关窗口」就是真的要退出了 —— 否则菜单里的「退出」和系统注销
+    // 都会被 close 拦截逻辑收进托盘，表现为「点了退出没反应」
+    isQuitting = true;
     if (profileMgr) for (const s of profileMgr.stores.values()) s.flush();
   });
 }

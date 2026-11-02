@@ -74,6 +74,48 @@ contextBridge.exposeInMainWorld('bridge', {
     openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
   },
 
+  /* ---- 应用级偏好（托盘 / 关闭行为）----
+   * 存在主进程自己的 app-prefs.json 里，不进 workspace、不参与同步，
+   * 因为主进程要在窗口 close 的那一刻就能立刻决定怎么办。 */
+  prefs: {
+    get: () => ipcRenderer.invoke('app:prefs:get'),
+    set: (partial) => ipcRenderer.invoke('app:prefs:set', partial),
+    onChanged: (handler) => {
+      const listener = (_e, payload) => handler(payload);
+      ipcRenderer.on('app-prefs-changed', listener);
+      return () => ipcRenderer.removeListener('app-prefs-changed', listener);
+    },
+  },
+  app: {
+    hideToTray: () => ipcRenderer.invoke('app:hideToTray'),
+    show: () => ipcRenderer.invoke('app:show'),
+  },
+
+  /* ---- 关闭窗口确认 ----
+   * 主进程在 close 事件里拦下窗口后，通过 onAsk 把选择权交给界面，
+   * 界面做完决定必须回一条 decide —— 不回的话主进程会一直等到超时。 */
+  closePrompt: {
+    onAsk: (handler) => {
+      const listener = (_e, payload) => handler(payload);
+      ipcRenderer.on('app:close-prompt', listener);
+      return () => ipcRenderer.removeListener('app:close-prompt', listener);
+    },
+    decide: (payload) => ipcRenderer.send('app:close-decision', payload),
+    // 主进程等超时了、放弃这次询问：界面把自己的框收掉，别再挡着
+    onDismiss: (handler) => {
+      const listener = () => handler();
+      ipcRenderer.on('app:close-prompt-dismiss', listener);
+      return () => ipcRenderer.removeListener('app:close-prompt-dismiss', listener);
+    },
+  },
+
+  /* 第一次收进托盘时，界面里给一条「窗口去哪了」的提示 */
+  onTrayHint: (handler) => {
+    const listener = () => handler();
+    ipcRenderer.on('app:tray-hint', listener);
+    return () => ipcRenderer.removeListener('app:tray-hint', listener);
+  },
+
   /* ---- 主进程菜单事件 ---- */
   onMenu: (handler) => {
     const listener = (_e, payload) => handler(payload);

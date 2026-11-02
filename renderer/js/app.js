@@ -32,9 +32,10 @@ import { renderSidebar, initSidebar, searchRequests } from './ui/sidebar.js';
 import { renderEnvPane, renderEnvContent, initEnvEvents } from './ui/envView.js';
 import { renderRunnerPane, renderRunnerContent, initRunnerEvents, getRunnerState, runRequestsDirect, runFolderDirect } from './ui/runnerView.js';
 import { renderSettingsPane, renderSettingsContent, initSettingsEvents } from './ui/settingsView.js';
+import { initClosePrompt } from './ui/closePrompt.js';
 import { importFromText, parseCurl, toPostmanCollection, toCurl } from './importers.js';
 import { initSyncEngine, syncNow, syncCfg, setStatus } from './sync.js';
-import { initUpdate, scheduleStartupCheck, checkForUpdate, updateState } from './update.js';
+import { initUpdate, scheduleStartupCheck, checkForUpdate, updateState, updateCfg, appInfo, promptUpdate } from './update.js';
 
 const bridge = window.bridge;
 
@@ -339,9 +340,7 @@ function refreshTopbar() {
   // 有新版本时在设置入口上点一个小红点，用户不去设置页也能看到
   const updDot = qs('#update-dot');
   if (updDot) {
-    const hasNew = updateState.status === 'available'
-      || updateState.status === 'downloading'
-      || updateState.status === 'downloaded';
+    const hasNew = hasPendingUpdate();
     updDot.hidden = !hasNew;
     const btnSettings = qs('#btn-settings');
     if (btnSettings) {
@@ -350,6 +349,100 @@ function refreshTopbar() {
         : `设置（发现新版本 v${updateState.latest ? updateState.latest.version : ''}）`;
     }
   }
+
+  paintVersionStatus();
+}
+
+/* ---------- 右下角：版本 / 渠道 / 更新入口 ---------- */
+const CHANNEL_LABEL = { stable: '正式版', dev: '开发版' };
+
+/**
+ * 这条构建属于哪个渠道：版本号带 `-dev` 就是开发版构建，否则看订阅渠道。
+ * 不能只读 settings.update.channel —— 那样会出现「v1.2.0-dev.1 · 正式版」这种
+ * 自相矛盾的显示（用户订的是正式版渠道，但手上跑的是 dev 包）。
+ */
+function buildChannel(version) {
+  if (/-dev/i.test(String(version || ''))) return 'dev';
+  return (updateCfg().channel || 'stable') === 'dev' ? 'dev' : 'stable';
+}
+
+/**
+ * 「已发现但还没装」的新版本。状态栏提示、顶栏红点、托盘菜单的文案
+ * 都用这一个判断，避免三处各自写一套条件慢慢走偏。
+ */
+function hasPendingUpdate() {
+  return updateState.status === 'available'
+    || updateState.status === 'downloading'
+    || updateState.status === 'downloaded';
+}
+
+let lastAppInfo = null;
+let versionPaintKey = '';
+
+/**
+ * 刷新右下角的版本胶囊。
+ * 这里既是「我现在是什么版本 / 哪个渠道」的常驻信息，也是更新提示的入口：
+ * 有新版本时变黄并带上 ↑ 目标版本，点一下直接开更新窗口。
+ */
+async function paintVersionStatus() {
+  const el = qs('#status-version');
+  if (!el) return;
+
+  const info = lastAppInfo || await appInfo();
+  lastAppInfo = info;
+  const ch = buildChannel(info.version);
+  const latest = updateState.latest;
+  const pending = hasPendingUpdate() && latest;
+
+  // 同一份内容不重复写 DOM（refreshTopbar 每次 commit 都会被调用）
+  const key = [info.version, ch, updateState.status, latest ? latest.version : ''].join('|');
+  if (key === versionPaintKey) return;
+  versionPaintKey = key;
+
+  const label = qs('#version-label');
+  if (label) {
+    label.innerHTML = `v${escapeHtml(info.version)}<span class="version-channel"> · ${CHANNEL_LABEL[ch]}</span>`;
+  }
+
+  const badge = qs('#version-badge');
+  if (badge) {
+    badge.hidden = !pending;
+    badge.textContent = pending ? 'v' + latest.version : '';
+  }
+  el.classList.toggle('has-new', !!pending);
+
+  // 订阅渠道与「这条构建本身」不一致时，tooltip 里点明，避免用户以为渠道没生效
+  const sub = (updateCfg().channel || 'stable') === 'dev' ? 'dev' : 'stable';
+  const subNote = sub === ch ? '' : `，更新渠道订阅的是${CHANNEL_LABEL[sub]}`;
+  el.title = pending
+    ? `发现新版本 v${latest.version}（当前 v${info.version} · ${CHANNEL_LABEL[ch]}${subNote}），点击查看`
+    : `当前 v${info.version} · ${CHANNEL_LABEL[ch]}${subNote}，点击检查更新（右键更多）`;
+}
+
+/** 点版本号 / 右键它时弹出的菜单：检查更新、看新版本、跳设置、复制版本信息 */
+function showVersionMenu(e) {
+  const info = lastAppInfo || {};
+  const ch = buildChannel(info.version);
+  const latest = updateState.latest;
+  const pending = hasPendingUpdate() && latest;
+
+  const items = [
+    { label: `MyApiTools v${info.version || '—'} · ${CHANNEL_LABEL[ch]}`, header: true },
+    { separator: true },
+    { label: '查看新版本…', icon: '↑', action: () => promptUpdate(), disabled: !pending },
+    { label: '检查更新', icon: '⟳', action: () => checkForUpdate({ silent: false }) },
+    { label: '更新渠道与设置…', icon: '⚙', action: () => openTab({ type: 'settings' }) },
+    { separator: true },
+    {
+      label: '复制版本信息',
+      icon: '⧉',
+      action: () => {
+        bridge.clipboard.write(`MyApiTools v${info.version || '—'} · ${CHANNEL_LABEL[ch]}`);
+        toastOk('已复制版本信息');
+      },
+    },
+  ];
+  showContextMenu(e, items);
 }
 
 /* ---------- 选择项目 ---------- */
@@ -1136,6 +1229,7 @@ async function boot() {
   };
 
   const info = await bridge.info();
+  lastAppInfo = info;   // 版本胶囊要同步用它，省一次 IPC
   qs('#status-store').textContent = '工作区：' + (info.activeProfileName || '本机');
   qs('#status-store').title = info.dataFile;
 
@@ -1198,6 +1292,19 @@ async function boot() {
     if (!sy.token) return void syncNow('both');
     openTab({ type: 'settings' });
   };
+
+  /* ---------- 状态栏版本号：左键直达更新，右键出菜单 ----------
+   * 有新版本时左键直接把「更新确认窗口」弹出来（用户点的就是那条提示，
+   * 再让他多点一层菜单没有意义）；没有新版本时左键就等于「检查更新」。
+   * 其余动作（切渠道、复制版本信息）放右键菜单，避免主操作被稀释。 */
+  const versionEl = qs('#status-version');
+  if (versionEl) {
+    versionEl.onclick = () => {
+      if (hasPendingUpdate()) promptUpdate();
+      else checkForUpdate({ silent: false });
+    };
+    versionEl.oncontextmenu = (e) => showVersionMenu(e);
+  }
 
   /* ---------- 欢迎页按钮 ---------- */
   on(qs('#panes'), 'click', '[data-welcome]', (_e, el) => {
@@ -1319,6 +1426,9 @@ async function boot() {
       case 'check-update':
         checkForUpdate({ silent: false });
         break;
+      case 'open-settings':
+        openTab({ type: 'settings' });
+        break;
       case 'run-folder':
         runFolderDirect(payload.collectionId);
         break;
@@ -1361,6 +1471,20 @@ async function boot() {
 
   // 主进程菜单
   bridge.onMenu((payload) => bus.emit('action', payload));
+
+  /* ---------- 关闭窗口确认（应用内弹窗） ----------
+   * 主进程在 close 事件里把窗口拦下，再回来问界面；界面不回话它会超时退回
+   * 系统原生框。所以这里只是把弹窗挂上，回复逻辑在 ui/closePrompt.js 里。 */
+  initClosePrompt();
+
+  /* ---------- 第一次收进托盘时的说明 ----------
+   * 窗口马上要藏起来，用应用自己的提示条说明「窗口去哪了」，
+   * 比系统通知的样式更统一（系统通知只在界面起不来时才用）。 */
+  if (bridge.onTrayHint) {
+    bridge.onTrayHint(() => {
+      toastWarn('窗口已收进系统托盘，点托盘图标可以随时唤回', 'MyApiTools 仍在后台运行');
+    });
+  }
 
   // 关闭前落盘
   window.addEventListener('beforeunload', () => saveNow());

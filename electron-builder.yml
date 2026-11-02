@@ -35,6 +35,9 @@ win:
       arch: [x64]
     - target: portable
       arch: [x64]
+  # 多尺寸 ICO（16~256），exe 图标、任务栏、快捷方式共用这一份。
+  # 源图 build/icon-source.jpg，生成脚本 tools/make-icons.py（换图改裁剪常量后重跑）。
+  icon: build/icon.ico
   artifactName: ${productName}-${version}-${arch}.${ext}
 
 # 两个 Windows target 都产出 .exe，如果共用上面那个 artifactName 会互相覆盖，
@@ -54,6 +57,7 @@ mac:
     - target: dmg
       arch: [x64, arm64]
   category: public.app-category.developer-tools
+  icon: build/icon.icns
   # 显式带上 ${arch}：x64 / arm64 两个 dmg 才不会互相覆盖，
   # 服务端管理页也能从文件名认出「版本 + 架构 + 平台」。
   artifactName: ${productName}-${version}-${arch}.${ext}
@@ -63,5 +67,6 @@ linux:
     - AppImage
     - deb
   category: Development
+  icon: build/icon.png
   # 同上：文件名带 ${arch}，供服务端发布页推断架构。
   artifactName: ${productName}-${version}-${arch}.${ext}

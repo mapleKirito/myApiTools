@@ -1,7 +1,14 @@
 # 依赖与构建产物
 node_modules/
 dist/
-build/
+# build/ 同时是 electron-builder 的 buildResources 目录，图标必须入库：
+# 只忽略目录里的其他临时产物，四个图标文件单独放出来。
+# 注意不能写成 `build/` 再 `!build/icon.ico` —— 整个目录被忽略时子项的反向规则不生效。
+build/*
+!build/icon.ico
+!build/icon.png
+!build/icon.icns
+!build/icon-source.jpg
 
 # 同步服务运行数据（含账号与配置，绝不入库）
 server/data/
@@ -25,6 +32,8 @@ workspace.json.corrupt-*
 
 # AI 工具的本地工作区/记忆
 .workbuddy/
+# TRAE 导出的 HTML 分享临时包，与项目无关
+.trae-html-share-packages/
 
 # 编辑器与系统
 .vscode/

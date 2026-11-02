@@ -17,6 +17,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { ipcMain } = require('electron');
 
 /**
  * 版本号比较，语义与 server/server.js 的 compareVersion 一致。
@@ -316,6 +317,9 @@ const PROBE = `(async () => {
   const liveHiddenEls = [...document.querySelectorAll('[hidden]')];
   out.hiddenElementCount = liveHiddenEls.length;
   out.allHiddenCollapsed = liveHiddenEls.every((el) => getComputedStyle(el).display === 'none');
+  // 关闭确认层是第二个 .modal-root，同样必须从启动起就是收起的
+  const cpRoot = document.querySelector('#close-prompt-root');
+  out.closePromptRootReady = !!cpRoot && cpRoot.hidden && getComputedStyle(cpRoot).display === 'none';
 
   /* ---------- 1.5 插入示例集合 ---------- */
   const demoBtn = document.querySelector('[data-welcome="demo"]');
@@ -443,6 +447,23 @@ const PROBE = `(async () => {
     && Math.abs(settingsScroll.getBoundingClientRect().left - settingsHost.getBoundingClientRect().left) <= 1;
   out.settingsContentCapped = !!settingsInner && Math.round(settingsInner.getBoundingClientRect().width) <= 860;
   out.settingsInnerHoldsContent = !!settingsInner && settingsInner.textContent.includes('配置同步');
+
+  /* ---------- 7.1 状态栏版本胶囊 + 窗口/托盘设置卡 ----------
+     版本胶囊是「我在跑哪个版本 / 哪个渠道」的唯一常驻入口，掉了就没人知道
+     手上是 dev 还是正式包；托盘卡是关闭行为的可视化设置，开关消失 = 用户改不回来。 */
+  await sleep(350);   // 托盘偏好要经 IPC 从主进程取，给它一拍
+  const versionEl = document.querySelector('#status-version');
+  out.versionLabel = versionEl ? String(versionEl.textContent || '').replace(/\s+/g, ' ').trim() : '';
+  out.versionHasChannel = /(开发版|正式版)/.test(out.versionLabel);
+  out.versionIsButton = !!versionEl && versionEl.tagName === 'BUTTON';
+  const versionBadge = versionEl && versionEl.querySelector('#version-badge');
+  out.versionBadgeHidden = !!versionBadge && versionBadge.hidden;
+  // 无更新时必须保持「非高亮」，否则状态栏会一直像在报警
+  out.versionNotHighlighted = !!versionEl && !versionEl.classList.contains('has-new');
+  out.trayCardRendered = !!document.querySelector('[data-role="tray-card"] .card');
+  out.trayHasCloseAction = !!document.querySelector('[data-tray="closeAction"]');
+  out.trayHasEnabledSwitch = !!document.querySelector('[data-tray="enabled"]');
+  out.trayCardText = (document.querySelector('[data-role="tray-card"]') || {}).textContent || '';
 
   /* ---------- 8. 批量执行页 ---------- */
   document.querySelector('#btn-runner').click();
@@ -1079,6 +1100,11 @@ const PROBE_UPDATE = `(async () => {
     out.installBtnText = (document.querySelector('[data-upd-act="install"]') || {}).textContent || '';
     out.subAfterDownload = text('[data-role="upd-sub"]');
     out.topbarDotShown = !document.querySelector('#update-dot').hidden;
+    // 状态栏版本胶囊必须同步变成「有新版本」的提示态 —— 它和顶栏红点看的是同一份状态
+    const verEl = document.querySelector('#status-version');
+    out.versionBadgeShown = !document.querySelector('#version-badge').hidden;
+    out.versionHighlighted = !!verEl && verEl.classList.contains('has-new');
+    out.versionBadgeText = (document.querySelector('#version-badge') || {}).textContent || '';
 
     /* ---------- 跳过此版本 ---------- */
     const installBtn = document.querySelector('[data-upd-act="install"]');
@@ -1110,6 +1136,95 @@ const PROBE_UPDATE = `(async () => {
   }
   out.errorCount = errs.length;
   out.errors = errs.slice(0, 10);
+  return out;
+})()`;
+
+/**
+ * 阶段 7：关闭窗口确认框（应用内弹窗）
+ * 托盘在冒烟环境里是关掉的（临时数据目录 + 无头环境），所以这里不走
+ * 「点窗口关闭按钮」那条真实路径，而是由主进程直接下发 app:close-prompt，
+ * 验证「界面能把框画出来、能给主进程回话」这段新增的契约。
+ */
+const PROBE_CLOSE_PROMPT = `(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const until = async (cond, ms) => {
+    const t = Date.now();
+    while (Date.now() - t < ms) { if (cond()) return true; await sleep(100); }
+    return !!cond();
+  };
+  const out = {};
+  const errs = [];
+  window.addEventListener('error', (e) => errs.push('error: ' + e.message));
+  const rootOf = () => document.querySelector('#close-prompt-root');
+  const text = (sel) => {
+    const el = document.querySelector(sel);
+    return el ? String(el.textContent || '').replace(/\\s+/g, ' ').trim() : '';
+  };
+
+  try {
+    out.rootExists = !!rootOf();
+    out.hiddenBeforeAsk = rootOf() ? rootOf().hidden : null;
+
+    out.shown = await until(() => rootOf() && !rootOf().hidden, 4000);
+    const modal = rootOf() ? rootOf().querySelector('.modal') : null;
+    out.modalIsInApp = !!modal;
+    out.usesThemeVars = !!modal && getComputedStyle(modal).borderRadius !== '0px';
+    out.title = text('#cp-title');
+    out.question = text('.cp-question');
+    out.bodyMentionsTray = text('.close-prompt .modal-body').includes('托盘');
+    out.optionCount = rootOf() ? rootOf().querySelectorAll('[data-choice]').length : 0;
+    out.rememberFound = !!document.querySelector('#close-prompt-root [data-remember]');
+    out.hintFound = !!document.querySelector('.cp-hint');
+    // 默认项必须是「保留在托盘」（安全动作），主按钮文案跟着它走
+    const trayOpt = document.querySelector('#close-prompt-root [data-choice="tray"]');
+    out.defaultIsTray = !!trayOpt && trayOpt.getAttribute('aria-checked') === 'true'
+      && trayOpt.classList.contains('selected');
+    out.okTextDefault = text('#close-prompt-root [data-act="ok"]');
+
+    // 改选「彻底退出」：主按钮文案与配色都要跟着变（破坏性动作不能长成同一个蓝按钮）
+    const quitOpt = document.querySelector('#close-prompt-root [data-choice="quit"]');
+    quitOpt.click();
+    await sleep(80);
+    const okBtn = document.querySelector('#close-prompt-root [data-act="ok"]');
+    out.okTextQuit = okBtn ? String(okBtn.textContent || '').trim() : '';
+    out.okDangerStyle = !!okBtn && okBtn.classList.contains('danger-solid');
+    out.quitSelected = quitOpt.getAttribute('aria-checked') === 'true';
+
+    // 勾「记住选择」再确定：主进程应该收到 { action:'quit', remember:true }
+    document.querySelector('#close-prompt-root [data-remember]').checked = true;
+    okBtn.click();
+    await sleep(150);
+    out.hiddenAfterOk = rootOf().hidden;
+    out.rootCleared = rootOf().innerHTML.trim() === '';
+  } catch (e) {
+    out.probeError = e && e.stack ? e.stack : String(e);
+  }
+  out.errorCount = errs.length;
+  out.errors = errs.slice(0, 10);
+  return out;
+})()`;
+
+/** 阶段 7b：取消出口（取消按钮 / Esc / 点遮罩三者等价，这里走按钮） */
+const PROBE_CLOSE_CANCEL = `(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const until = async (cond, ms) => {
+    const t = Date.now();
+    while (Date.now() - t < ms) { if (cond()) return true; await sleep(100); }
+    return !!cond();
+  };
+  const out = {};
+  const rootOf = () => document.querySelector('#close-prompt-root');
+  try {
+    out.shown = await until(() => rootOf() && !rootOf().hidden, 4000);
+    const btn = document.querySelector('#close-prompt-root [data-act="cancel"]');
+    out.cancelFound = !!btn;
+    if (btn) btn.click();
+    await sleep(150);
+    out.hiddenAfterCancel = rootOf().hidden;
+    out.rootCleared = rootOf().innerHTML.trim() === '';
+  } catch (e) {
+    out.probeError = e && e.stack ? e.stack : String(e);
+  }
   return out;
 })()`;
 
@@ -1230,6 +1345,14 @@ function attach(win, app, smokeDir) {
         ['设置页滚动容器铺满主区域（滚动条在最右）', base.settingsScrollFullWidth],
         ['设置页内容仍按 860px 收窄', base.settingsContentCapped],
         ['设置内容挂在内层容器上', base.settingsInnerHoldsContent],
+        ['状态栏显示版本号与渠道', /^v\d+\.\d+\.\d+/.test(base.versionLabel) && base.versionHasChannel],
+        ['版本号是按钮（可点击检查更新）', base.versionIsButton],
+        ['无新版本时不显示 ↑ 目标版本', base.versionBadgeHidden],
+        ['无新版本时版本胶囊不高亮', base.versionNotHighlighted],
+        ['设置页有「窗口与托盘」卡片', base.trayCardRendered],
+        ['托盘卡有「关闭主窗口时」下拉', base.trayHasCloseAction],
+        ['托盘卡有托盘开关', base.trayHasEnabledSwitch],
+        ['托盘卡说明含托盘与退出语义', /托盘/.test(base.trayCardText) && /退出/.test(base.trayCardText)],
         ['批量执行页渲染', base.runnerRendered],
         ['批量执行有开始按钮', base.runnerHasStartBtn],
         ['＋请求按钮先弹下拉菜单', base.newReqMenuFound === true],
@@ -1240,6 +1363,7 @@ function attach(win, app, smokeDir) {
         ['项目切换后回到欢迎页', base.welcomeAfterSwitchBack],
         ['[hidden] 兜底规则生效（能压过 .modal-root 的 display:grid）', base.hiddenRuleDisplay === 'none'],
         ['页面上带 hidden 的元素确实都不可见', base.allHiddenCollapsed],
+        ['关闭确认层启动时就是收起的', base.closePromptRootReady],
         ['阶段 1 渲染进程无未捕获异常', base.errorCount === 0],
       ];
 
@@ -1425,10 +1549,48 @@ function attach(win, app, smokeDir) {
         ['进度条走到 100%', upd.progressWidth === '100%'],
         ['关闭弹窗后卡片显示待安装', upd.badgeAfterDownload === '待安装'],
         ['顶栏出现新版本小红点', upd.topbarDotShown],
+        ['状态栏版本胶囊给出新版本提示', upd.versionBadgeShown && upd.versionHighlighted],
+        ['提示里写明目标版本号', String(upd.versionBadgeText || '').includes('9.9.9')],
         ['再次打开弹窗可跳过此版本', upd.modalReopened && upd.ignoredShown],
         ['跳过提示提到具体版本', String(upd.ignoredText || '').includes('9.9.9')],
         ['跳过后可恢复提示', upd.unignoreBtnFound && upd.ignoredGoneAfterRestore],
         ['阶段 6 渲染进程无未捕获异常', upd.errorCount === 0]
+      );
+
+      /* ---------- 阶段 7：关闭窗口确认框（应用内弹窗） ----------
+       * 冒烟环境里托盘是关掉的，走不到「点关闭按钮」那条真实路径，
+       * 所以由主进程直接下发 app:close-prompt，验证界面能画框、能回话。 */
+      const decisions = [];
+      const onDecision = (_e, payload) => decisions.push(payload || {});
+      ipcMain.on('app:close-decision', onDecision);
+
+      step('probe 7 start');
+      win.webContents.send('app:close-prompt', { defaultAction: 'tray' });
+      const cp = await runProbe(win, PROBE_CLOSE_PROMPT, '7');
+
+      win.webContents.send('app:close-prompt', { defaultAction: 'tray' });
+      const cpc = await runProbe(win, PROBE_CLOSE_CANCEL, '7b');
+      await new Promise((r) => setTimeout(r, 300));   // 等最后一条 IPC 落地
+      ipcMain.removeListener('app:close-decision', onDecision);
+      step('probe 7 done, decisions=' + JSON.stringify(decisions) + ' probeErrors=' + [cp.probeError, cpc.probeError].filter(Boolean).length);
+
+      checks.push(
+        ['关闭确认层挂在独立容器上', cp.rootExists],
+        ['下发后弹出应用内确认框', cp.shown && cp.modalIsInApp],
+        ['确认框用的是应用主题而不是系统原生框', cp.usesThemeVars],
+        ['标题说明这是关闭确认', cp.title === '关闭 MyApiTools'],
+        ['问句与选项都提到托盘', String(cp.question || '').includes('托盘') && cp.bodyMentionsTray],
+        ['给出「托盘 / 退出」两个选项', cp.optionCount === 2],
+        ['默认选中「保留在托盘」', cp.defaultIsTray],
+        ['主按钮文案跟随默认项', cp.okTextDefault === '收进托盘'],
+        ['有「记住我的选择」勾选框', cp.rememberFound],
+        ['提示了以后改回来的入口', cp.hintFound],
+        ['改选退出后主按钮变红', cp.quitSelected && cp.okTextQuit === '彻底退出' && cp.okDangerStyle],
+        ['确定后弹窗收起并清空', cp.hiddenAfterOk && cp.rootCleared],
+        ['主进程收到「退出 + 记住」的回话', decisions[0] && decisions[0].action === 'quit' && decisions[0].remember === true],
+        ['取消也能正常收框', cpc.shown && cpc.hiddenAfterCancel && cpc.rootCleared],
+        ['主进程收到「取消」而不是干等', decisions[1] && decisions[1].action === 'cancel' && decisions[1].remember === false],
+        ['阶段 7 渲染进程无未捕获异常', cp.errorCount === 0]
       );
 
       /* ---------- 汇总 ---------- */

@@ -104,6 +104,23 @@ jobs:
           # artifacts/**/* 只包含三平台的安装包本体（exe / dmg / AppImage / deb），
           # blockmap、latest*.yml、builder-debug.yml 已在上传阶段过滤掉
           files: artifacts/**/*
+          # 每次发布都带上未签名安装包的放行说明（generate_release_notes
+          # 会把自动生成的更新日志追加在这段 body 之后，两者不冲突）
+          body: |
+            ## macOS 用户请先看这里
+
+            本项目暂无 Apple 开发者证书，macOS 安装包**未做公证**，浏览器下载后首次打开会被拦截（提示「无法验证开发者」，只有移到废纸篓 / 取消两个按钮）。这是 Gatekeeper 在拦未公证的应用，不是包坏了。
+
+            把 DMG 里的 `.app` 拖进「应用程序」后，任选其一放行：
+
+            - 终端执行：`xattr -cr /Applications/MyApiTools.app`
+            - 或：系统设置 → 隐私与安全性 → 底部点「仍要打开」
+
+            放行一次即可，之后正常打开。
+
+            ## Windows 用户
+
+            首次运行如遇 SmartScreen 提示，点「更多信息 → 仍要运行」即可。
           # 自动根据合并的 PR 和提交生成更新日志
           generate_release_notes: true
           # 版本号带 '-'（如 0.0.1-dev）时自动标记为预发布

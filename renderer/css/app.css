@@ -903,6 +903,8 @@ pre.code-block {
 .btn.primary:hover { background: #7f99ff; }
 .btn.danger { color: var(--danger); border-color: rgba(248,113,113,.4); }
 .btn.danger:hover { background: rgba(248,113,113,.12); }
+.btn.danger-solid { background: rgba(248,113,113,.18); border-color: rgba(248,113,113,.5); color: var(--danger); }
+.btn.danger-solid:hover { background: rgba(248,113,113,.26); }
 .btn:disabled { opacity: .5; cursor: default; }
 .btn-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 
@@ -995,6 +997,103 @@ pre.code-block {
 .modal .field-label { display: block; margin-bottom: 6px; color: var(--text-2); font-size: 12px; }
 .modal .field-block { margin-bottom: 14px; }
 
+/* ==================== 关闭确认弹窗 ====================
+   可能压在「导入 / 更新」等弹窗之上，所以单独一层、z-index 更高。
+   默认项（收进托盘）是安全动作，用主按钮；选「彻底退出」时主按钮变红，
+   避免手快在两个状态下点到同一个蓝色按钮。 */
+.close-prompt-root { z-index: 320; }
+.close-prompt { width: 470px; max-width: min(520px, 92vw); }
+.close-prompt .modal-head { font-size: 13.5px; }
+.close-prompt .modal-body { padding: 18px 20px 14px; }
+
+.cp-lead { display: flex; gap: 12px; margin-bottom: 16px; }
+.cp-glyph {
+  flex: none; width: 38px; height: 38px; border-radius: 10px;
+  display: grid; place-items: center;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+  color: var(--accent);
+}
+.cp-glyph svg { width: 20px; height: 20px; }
+.cp-lead-text { min-width: 0; padding-top: 1px; }
+.cp-question { font-size: 13.5px; font-weight: 600; line-height: 1.5; margin-bottom: 5px; }
+.cp-note { font-size: 12px; color: var(--text-2); line-height: 1.7; }
+
+.cp-options { display: flex; flex-direction: column; gap: 8px; }
+.cp-opt {
+  display: flex; align-items: flex-start; gap: 10px;
+  width: 100%; padding: 10px 12px;
+  font: inherit; text-align: left; color: var(--text); cursor: pointer;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  transition: background .12s, border-color .12s;
+}
+.cp-opt:hover { background: var(--bg-3); border-color: var(--border-strong); }
+.cp-opt.selected { background: var(--accent-soft); border-color: var(--accent-line); }
+/* 选中「彻底退出」时整张卡片转红：这一项是不可逆的，别和默认项长得一样 */
+.cp-opt.selected[data-choice="quit"] {
+  background: rgba(248,113,113,.10);
+  border-color: rgba(248,113,113,.45);
+}
+.cp-opt.selected[data-choice="quit"] .cp-radio { border-color: var(--danger); }
+.cp-opt.selected[data-choice="quit"] .cp-radio::after { background: var(--danger); }
+.cp-opt:focus-visible { outline: none; border-color: var(--accent-line); }
+.cp-radio {
+  flex: none; width: 15px; height: 15px; margin-top: 2px;
+  position: relative;
+  border-radius: 50%;
+  border: 1.5px solid var(--border-strong);
+  background: var(--bg);
+}
+.cp-opt.selected .cp-radio { border-color: var(--accent); }
+.cp-opt.selected .cp-radio::after {
+  content: ''; position: absolute; inset: 2.5px; border-radius: 50%;
+  background: var(--accent);
+}
+.cp-opt-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.cp-opt-title { display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; }
+.cp-opt-desc { font-size: 11.5px; color: var(--text-3); line-height: 1.6; }
+.cp-opt.selected .cp-opt-desc { color: var(--text-2); }
+.cp-tag {
+  font-style: normal; font-size: 10px; font-weight: 500; line-height: 1;
+  padding: 2px 5px; border-radius: 4px;
+  color: var(--accent);
+  background: rgba(109,139,255,.16);
+  border: 1px solid rgba(109,139,255,.30);
+}
+
+.cp-remember {
+  display: flex; align-items: center; gap: 7px;
+  margin-top: 14px; font-size: 12px; color: var(--text-2);
+  cursor: pointer; user-select: none;
+}
+/* 原生复选框在暗色主题下是一块刺眼的白方块，这里自己画一个：
+   勾选态用背景图放对勾（<input> 上不能可靠地用 ::after） */
+.cp-remember input[type=checkbox] {
+  appearance: none; -webkit-appearance: none;
+  flex: none;
+  width: 14px; height: 14px; margin: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--bg) center / 10px 10px no-repeat;
+  cursor: pointer;
+  transition: background-color .12s, border-color .12s;
+}
+.cp-remember input[type=checkbox]:hover { border-color: var(--accent-line); }
+.cp-remember input[type=checkbox]:checked {
+  background-color: var(--accent);
+  border-color: var(--accent);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 12.5 9.5 18 20 6.5'/%3E%3C/svg%3E");
+}
+.cp-remember input[type=checkbox]:focus-visible { outline: 1px solid var(--accent-line); outline-offset: 1px; }
+.cp-hint { margin-top: 6px; font-size: 11px; color: var(--text-3); }
+/* 焦点环用主题色，别用浏览器默认的高亮色（在暗色界面里是一圈突兀的黄） */
+.close-prompt .btn:focus-visible {
+  outline: 2px solid rgba(109,139,255,.55);
+  outline-offset: 2px;
+}
+
 /* ==================== 登录 / 注册弹窗 ==================== */
 .auth-tabs { display: flex; gap: 6px; margin-bottom: 14px; }
 .auth-tab {
@@ -1073,6 +1172,33 @@ pre.code-block {
 .status-item { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40vw; }
 .status-item.clickable { cursor: pointer; }
 .status-item.clickable:hover { color: var(--text-2); }
+
+/* 右下角的版本号 + 渠道。做成胶囊按钮：既是「我现在跑的是哪个版本」的常驻展示，
+   也是「有新版本」时的提示入口（点一下直接开更新窗口）。 */
+.version-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  padding: 2px 8px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  transition: background .15s, border-color .15s, color .15s;
+}
+.version-item:hover { background: var(--bg-3); border-color: var(--border); color: var(--text-2); }
+.version-item .version-channel { color: var(--text-3); }
+.version-item.has-new {
+  color: var(--warn);
+  background: rgba(251, 191, 36, .12);
+  border-color: rgba(251, 191, 36, .38);
+}
+.version-item.has-new:hover { background: rgba(251, 191, 36, .2); color: var(--warn); }
+.version-badge { font-weight: 600; }
+.version-badge::before { content: "↑ "; }
 
 /* =====================================================================
    客户端更新
